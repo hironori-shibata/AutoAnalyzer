@@ -70,5 +70,5 @@ DCF_DEFAULTS = {
     "tax_rate": 0.30,              # 実効税率
     "capex_ratio": 0.06,           # 設備投資比率（売上比）
     "terminal_growth_rate": 0.007,  # 永久成長率（1%に変更）
-    "projection_years": 5,         # 予測期間（年）
+    "projection_years": 7,         # 予測期間（年）※5→7に変更（TV依存度低減のため）
 }

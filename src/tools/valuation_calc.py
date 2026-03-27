@@ -90,8 +90,17 @@ class DCFValuationTool(BaseTool):
             return {"error": "free_cash_flows が空です"}
 
         # WACC計算 (CAPM)
+        note = ""  # 各種警告・注記を格納（後でresに追加）
         re = p.risk_free_rate + p.beta * p.equity_risk_premium
         wacc = (1 - p.debt_ratio) * re + p.debt_ratio * p.debt_cost * (1 - p.tax_rate)
+
+        # WACC低水準警告（日本株の一般的な範囲 5〜7% を大きく下回る場合）
+        if wacc < 0.045:
+            note += (
+                f"\n⚠️ WACC({wacc:.2%})警告: 日本株では電力・公益セクターでも5〜7%程度が一般的です。"
+                "risk_free_rate・equity_risk_premium・betaの入力値を再確認してください。"
+                "（例: 国債利回り1.5%、ERP 6%、β=1.1 → WACC≒5.88%）"
+            )
 
         if wacc <= p.terminal_growth_rate:
             logger.warning("WACC <= 永久成長率。継続価値計算が不安定になるため調整します")
@@ -148,10 +157,11 @@ class DCFValuationTool(BaseTool):
         # 単位不整合（百万円単位入力）の自動補正
         # 通常、上場企業の企業価値(円)は発行済株式数(株)よりも十分に大きくなります（理論株価が1円未満になることは稀）。
         # もし企業価値の数値自体が株数より小さい場合、1,000,000倍の単位ミス（百万円単位での入力）と判定して補正します。
-        note = ""
+        scale_factor = 1  # 感応度分析のnet_debt補正に使用
         if p.shares_outstanding and p.shares_outstanding > 100_000:
             if enterprise_value < p.shares_outstanding:
                 logger.warning("DCF企業価値が発行済株式数より小さいため、入力値が『百万円単位』と判定し、1,000,000倍に自動補正します。")
+                scale_factor = 1_000_000
                 if intrinsic_price is not None:
                     intrinsic_price *= 1_000_000
                 enterprise_value *= 1_000_000
@@ -160,7 +170,7 @@ class DCFValuationTool(BaseTool):
                 tv *= 1_000_000
                 pv_tv *= 1_000_000
                 projected_fcfs = [f * 1_000_000 for f in projected_fcfs]
-                note = "※入力された財務数値が百万円単位であったため、計算過程で自動的に1,000,000倍（1円単位）に補正して算定しました。"
+                note += "※入力された財務数値が百万円単位であったため、計算過程で自動的に1,000,000倍（1円単位）に補正して算定しました。"
 
         if tv_ratio > 0.75:
             if tv_ratio > 0.9:
@@ -169,6 +179,38 @@ class DCFValuationTool(BaseTool):
             else:
                 note += ("\n※警告【中】: 企業価値の75〜90%が継続価値で占められています（ターミナル頼みのDCF）。"
                          "永久成長率・WACCの前提を慎重に確認してください。")
+
+        # ===== 感応度分析テーブル（WACC × 永久成長率 の 3×5 マトリックス） =====
+        # 補正済みの projected_fcfs と scale_factor を使用して各セルの理論株価を計算する
+        _wacc_deltas = [-0.01, -0.005, 0.0, +0.005, +0.01]
+        _g_deltas    = [+0.005, 0.0, -0.005]
+        _net_debt_corrected = p.net_debt * scale_factor
+
+        _sens_rows = []
+        for _gd in _g_deltas:
+            _row = []
+            for _wd in _wacc_deltas:
+                _w = wacc + _wd
+                _g = p.terminal_growth_rate + _gd
+                if _w <= _g:
+                    _w = _g + 0.001  # ゼロ除算回避
+                _pv_fcfs_s = sum(f / (1 + _w) ** t for t, f in enumerate(projected_fcfs, 1))
+                _tv_s = projected_fcfs[-1] * (1 + _g) / (_w - _g)
+                _pv_tv_s = _tv_s / (1 + _w) ** p.projection_years
+                _ev_s = _pv_fcfs_s + _pv_tv_s
+                _eq_s = _ev_s - _net_debt_corrected
+                _price_s = _eq_s / p.shares_outstanding if p.shares_outstanding else 0
+                _row.append(f"{round(_price_s):,}円" if _price_s > 0 else "N/A")
+            _sens_rows.append(_row)
+
+        # Markdown テーブル生成（ヘッダーは実際の % 値）
+        _wacc_hdrs = [f"WACC {(wacc + d) * 100:.2f}%" for d in _wacc_deltas]
+        _g_labels  = [f"g={(p.terminal_growth_rate + d) * 100:.2f}%" for d in _g_deltas]
+        _tbl_header = "| g＼WACC | " + " | ".join(_wacc_hdrs) + " |"
+        _tbl_sep    = "|" + "---|" * (len(_wacc_deltas) + 1)
+        _tbl_rows   = [f"| {_g_labels[i]} | " + " | ".join(_sens_rows[i]) + " |"
+                       for i in range(len(_g_deltas))]
+        sensitivity_md = "\n".join([_tbl_header, _tbl_sep] + _tbl_rows)
 
         res = {
             "method": "DCF法",
@@ -196,6 +238,10 @@ class DCFValuationTool(BaseTool):
             "equity_value": round(equity_value),
             "equity_value_label": _format_jpy(equity_value),
             "intrinsic_price_per_share": round(intrinsic_price, 2) if intrinsic_price else None,
+            # --- 感応度分析テーブル ---
+            "sensitivity_table_markdown": sensitivity_md,
+            "sensitivity_wacc_base": round(wacc, 4),
+            "sensitivity_g_base": round(p.terminal_growth_rate, 4),
         }
         if segment_cagr_note:
             res["segment_cagr_note"] = segment_cagr_note
@@ -280,8 +326,137 @@ class MultiplesValuationTool(BaseTool):
                 "error": "EV/EBITDA法にはtarget_ebitda・target_net_debt・target_sharesも必要です。"
             }
 
+        # ROIC vs WACC バリュートラップ判定（両方 > 0 の場合のみ）
+        if p.roic > 0 and p.base_wacc > 0:
+            spread = p.roic - p.base_wacc
+            if spread < 0:
+                result["value_trap_warning"] = (
+                    f"⚠️ バリュートラップ警告: ROIC({p.roic:.2%}) < WACC({p.base_wacc:.2%})。"
+                    f"スプレッド = {spread:.2%}。"
+                    "投下資本が資本コストを下回る価値破壊状態です。"
+                    "「割安」判定であっても、ROICがWACCを継続的に下回る限り理論的株価上昇余地は限定的です。"
+                )
+            else:
+                result["value_creation_note"] = (
+                    f"✅ 価値創造確認: ROIC({p.roic:.2%}) > WACC({p.base_wacc:.2%})。"
+                    f"スプレッド = +{spread:.2%}。株主価値を創造しています。"
+                )
+
         return result
 
+
+# ===== SOTP（Sum-of-the-Parts）法 =====
+
+class SOTPSegment(BaseModel):
+    """SOTP 1セグメントの入力定義"""
+    name: str
+    ebitda: float = 0.0               # セグメントEBITDA（円単位）
+    earnings: float = 0.0             # セグメント営業利益/純利益（円単位）。EV/EBITDA不可時のPER法用
+    ev_ebitda_multiple: float = 0.0   # EV/EBITDA倍率（Agent2のセグメント別競合中央値）
+    per_multiple: float = 0.0         # PER倍率（Agent2の競合中央値）。EV/EBITDA不可時のフォールバック
+
+
+class SOTPInput(BaseModel):
+    segments: list[SOTPSegment]       # セグメントリスト
+    net_debt: float                   # 連結純有利子負債（円単位・負なら純現金）
+    shares_outstanding: float         # 発行済株式数
+
+
+class SOTPValuationTool(BaseTool):
+    """
+    Sum-of-the-Parts（SOTP）法でセグメント別企業価値を合算し、理論株価を算定する。
+    複数の異質セグメントを持つ企業（例: 環境事業 + デジタル事業）に有効。
+    各セグメントのEBITDAに対してEV/EBITDA倍率を適用（不可なら earnings × PER でフォールバック）。
+    """
+    name: str = "SOTPValuationTool"
+    description: str = (
+        "SOTP（Sum-of-the-Parts）法でセグメント別企業価値を合算して理論株価を計算する。\n"
+        "Agent6が多セグメント企業に使用する。\n"
+        "segments: [{name, ebitda, earnings, ev_ebitda_multiple, per_multiple}]のリスト。\n"
+        "net_debt: 連結純有利子負債（円単位）、shares_outstanding: 発行済株式数。\n"
+        "各セグメントはEV/EBITDA法を優先、不可の場合はPER法にフォールバック。\n"
+        "⚠️ 金額パラメータはすべて【実際の円単位】で入力すること。"
+    )
+    args_schema: type[BaseModel] = SOTPInput
+
+    def _run(self, **kwargs) -> dict:
+        try:
+            p = SOTPInput(**kwargs)
+        except Exception as e:
+            return {"error": f"入力パラメータエラー: {e}"}
+
+        if not p.segments:
+            return {"error": "segments が空です"}
+        if not p.shares_outstanding:
+            return {"error": "shares_outstanding が0です"}
+
+        segment_results = []
+        total_ev = 0.0
+        warnings = []
+
+        for seg in p.segments:
+            # EV/EBITDA法を優先（ebitda と ev_ebitda_multiple が両方 > 0 の場合）
+            if seg.ebitda > 0 and seg.ev_ebitda_multiple > 0:
+                seg_ev = seg.ebitda * seg.ev_ebitda_multiple
+                method = f"EV/EBITDA法 ({seg.ev_ebitda_multiple:.1f}倍)"
+            # フォールバック: PER法（earnings と per_multiple が両方 > 0 の場合）
+            elif seg.earnings > 0 and seg.per_multiple > 0:
+                seg_ev = seg.earnings * seg.per_multiple
+                method = f"PER法 ({seg.per_multiple:.1f}倍)"
+            else:
+                warnings.append(f"「{seg.name}」: ebitda/earnings・倍率のいずれかが0のため算定不能")
+                segment_results.append({
+                    "name": seg.name,
+                    "implied_ev": None,
+                    "implied_ev_label": "算定不能",
+                    "method": "データ不足",
+                })
+                continue
+
+            total_ev += seg_ev
+            segment_results.append({
+                "name": seg.name,
+                "implied_ev": round(seg_ev),
+                "implied_ev_label": _format_jpy(seg_ev),
+                "method": method,
+            })
+
+        if total_ev <= 0:
+            return {"error": "算定可能なセグメントがなく合計EVが0以下です", "warnings": warnings}
+
+        # 単位補正（DCFValuationToolと同ロジック）
+        scale_note = ""
+        if p.shares_outstanding > 100_000 and total_ev < p.shares_outstanding:
+            logger.warning("SOTP合計EVが発行済株式数より小さいため百万円単位と判定し補正します")
+            for sr in segment_results:
+                if sr["implied_ev"] is not None:
+                    sr["implied_ev"] = round(sr["implied_ev"] * 1_000_000)
+                    sr["implied_ev_label"] = _format_jpy(sr["implied_ev"])
+            total_ev *= 1_000_000
+            scale_note = "※入力された財務数値が百万円単位であったため1,000,000倍に自動補正しました。"
+
+        equity_value = total_ev - p.net_debt
+        intrinsic_price = equity_value / p.shares_outstanding
+
+        result = {
+            "method": "SOTP法（Sum-of-the-Parts）",
+            "segment_results": segment_results,
+            "total_ev": round(total_ev),
+            "total_ev_label": _format_jpy(total_ev),
+            "net_debt": round(p.net_debt),
+            "equity_value": round(equity_value),
+            "equity_value_label": _format_jpy(equity_value),
+            "intrinsic_price_per_share": round(intrinsic_price, 2),
+            "ev_composition": (
+                f"SOTP合計EV={_format_jpy(total_ev)} - 純有利子負債{_format_jpy(p.net_debt)}"
+                f" = 株主価値{_format_jpy(equity_value)}"
+            ),
+        }
+        if warnings:
+            result["warnings"] = warnings
+        if scale_note:
+            result["scale_note"] = scale_note
+        return result
 
 # ===== 乖離率・割高割安判定ツール =====
 
@@ -290,6 +465,8 @@ class ValuationComparisonInput(BaseModel):
     dcf_intrinsic_price: float         # DCF法による理論株価（円）
     multiples_per_price: float = 0.0   # マルチプル法（PER）による理論株価（円）
     multiples_ev_ebitda_price: float = 0.0  # マルチプル法（EV/EBITDA）による理論株価（円）
+    roic: float = 0.0       # FinancialCalcToolのROIC出力（小数, 例: 0.035）。0なら評価スキップ
+    base_wacc: float = 0.0  # DCFValuationToolのwacc出力（小数, 例: 0.059）。0なら評価スキップ
 
 
 class ValuationComparisonTool(BaseTool):

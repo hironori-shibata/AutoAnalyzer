@@ -19,6 +19,17 @@ def get_llm() -> LLM:
         timeout=400,
     )
 
+def get_llm_long_output() -> LLM:
+    """長文出力が必要なAgent（Agent6等）向け。max_tokensを8192に設定してレポート途切れを防ぐ。"""
+    return LLM(
+        model="openai/deepseek-chat",
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        base_url="https://api.deepseek.com",
+        temperature=0.2,
+        timeout=600,
+        max_tokens=8192,
+    )
+
 def get_reasoner_llm() -> LLM:
     """DeepSeek Reasoner (R1) LLMインスタンスを返す"""
     return LLM(

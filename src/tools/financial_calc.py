@@ -25,18 +25,21 @@ class FinancialCalcInput(BaseModel):
     cogs: float                  # 売上原価
     operating_cf: float          # 営業キャッシュフロー
     capex: float                 # 設備投資額（支出として絶対値で渡す）
+    depreciation: float = 0.0   # 減価償却費（任意: EBITDAおよびROIC計算に使用）
+    tax_rate: float = 0.30      # 実効税率（ROIC計算に使用、デフォルト30%）
 
 
 class FinancialCalcTool(BaseTool):
     """
     決算短信から抽出した財務数値を受け取り、
-    ROA/ROE/EPS/営業利益率/自己資本比率/流動比率/D/E比率/総資産回転率/CCC/FCF
+    ROA/ROE/EPS/営業利益率/自己資本比率/流動比率/D/E比率/総資産回転率/CCC/FCF/EBITDA/ROIC
     を計算して返す。LLMは計算を行わずこのToolを使うこと。
     """
     name: str = "FinancialCalcTool"
     description: str = (
         "決算短信から抽出した財務数値（当期純利益・総資産・自己資本・売上高等）を受け取り、"
-        "ROA/ROE/EPS/営業利益率/自己資本比率/流動比率/D‑Eレシオ/資産回転率/CCC/FCF をPythonで計算する。"
+        "ROA/ROE/EPS/営業利益率/自己資本比率/流動比率/D‑Eレシオ/資産回転率/CCC/FCF/EBITDA/ROIC をPythonで計算する。"
+        "減価償却費(depreciation)を渡すとEBITDAとROICも計算される。"
         "LLMは絶対に計算を行わずこのToolを使うこと。"
     )
     args_schema: type[BaseModel] = FinancialCalcInput
@@ -58,6 +61,8 @@ class FinancialCalcTool(BaseTool):
         cogs: float,
         operating_cf: float,
         capex: float,
+        depreciation: float = 0.0,
+        tax_rate: float = 0.30,
     ) -> dict:
         d = FinancialCalcInput(
             net_income=net_income,
@@ -75,6 +80,8 @@ class FinancialCalcTool(BaseTool):
             cogs=cogs,
             operating_cf=operating_cf,
             capex=capex,
+            depreciation=depreciation,
+            tax_rate=tax_rate,
         )
 
         # CCC計算
@@ -83,9 +90,20 @@ class FinancialCalcTool(BaseTool):
         pay_days = (d.payables / d.cogs * 365) if d.cogs else 0
         ccc = inv_days + rec_days - pay_days
 
-        return {
+        # EBITDA（減価償却費が渡された場合のみ有効）
+        ebitda = d.operating_income + d.depreciation if d.depreciation > 0 else None
+        ebitda_margin = round(ebitda / d.revenue, 4) if (ebitda and d.revenue) else None
+
+        # ROIC = NOPAT / 投下資本（有利子負債 + 自己資本）
+        # 過剰資本・資本配分効率の評価に使用
+        nopat = d.operating_income * (1 - d.tax_rate)
+        invested_capital = d.interest_bearing_debt + d.equity
+        roic = round(nopat / invested_capital, 4) if invested_capital else None
+
+        result = {
             "ROA": round(d.net_income / d.total_assets, 4) if d.total_assets else None,
             "ROE": round(d.net_income / d.equity, 4) if d.equity else None,
+            "ROIC": roic,
             "EPS": round(d.net_income / d.shares_outstanding, 2) if d.shares_outstanding else None,
             "operating_margin": round(d.operating_income / d.revenue, 4) if d.revenue else None,
             "equity_ratio": round(d.equity / d.total_assets, 4) if d.total_assets else None,
@@ -99,6 +117,10 @@ class FinancialCalcTool(BaseTool):
             # FCF (営業CF - 設備投資)
             "fcf": round(d.operating_cf - d.capex, 2),
         }
+        if ebitda is not None:
+            result["ebitda"] = round(ebitda, 2)
+            result["ebitda_margin"] = ebitda_margin
+        return result
 
 
 # ===== TrendAnalysisTool =====

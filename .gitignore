@@ -35,6 +35,7 @@ data/*/index/
 
 # ログ
 *.log
+*.jsonl
 errorlog.txt
 
 # 生成レポート

@@ -1,0 +1,29 @@
+# Core Framework
+crewai
+crewai-tools
+
+# LLM / LangChain
+langchain
+langchain-community
+langchain-openai
+openai
+
+# Data Fetching & Scraping
+requests
+beautifulsoup4
+duckduckgo-search
+docling
+
+# Slack
+slack-bolt
+slack-sdk
+
+# Data Processing
+pandas
+numpy
+
+# Utilities
+python-dotenv
+pydantic
+loguru
+litellm

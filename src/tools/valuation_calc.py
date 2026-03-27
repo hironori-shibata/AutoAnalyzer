@@ -2,9 +2,10 @@
 企業価値計算ツール (DCF法・PER法)
 Agent6 (統括マネージャー) が使用する。LLMには計算をさせない。
 """
+import json as _json
 import statistics
 from crewai.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from loguru import logger
 
 from src.config import DCF_DEFAULTS
@@ -48,6 +49,33 @@ class DCFInput(BaseModel):
     # 例: 低利益セグメント拡大 → -0.01〜-0.02 / 高利益セグメント拡大 → +0.01〜+0.02
     margin_drift: float = 0.0
 
+    @field_validator('free_cash_flows', 'segment_weights', 'segment_growth_rates', mode='before')
+    @classmethod
+    def _parse_float_list(cls, v):
+        """LLMがJSON文字列またはカンマ区切り文字列で渡した場合も正しく解析する。"""
+        if isinstance(v, str):
+            try:
+                return [float(x) for x in _json.loads(v)]
+            except Exception:
+                try:
+                    return [float(x.strip()) for x in v.split(',') if x.strip()]
+                except Exception:
+                    return []
+        if isinstance(v, list):
+            return [float(x) for x in v if x is not None]
+        return v
+
+    @field_validator('segment_names', mode='before')
+    @classmethod
+    def _parse_str_list(cls, v):
+        """segment_namesがJSON文字列で渡された場合も正しく解析する。"""
+        if isinstance(v, str):
+            try:
+                return _json.loads(v)
+            except Exception:
+                return [x.strip() for x in v.split(',') if x.strip()]
+        return v
+
 
 # ===== マルチプル法 =====
 
@@ -65,6 +93,33 @@ class MultiplesInput(BaseModel):
     segment_names: list[str] = []          # セグメント名（例: ["自動車", "半導体"]）
     segment_weights: list[float] = []      # 売上構成比（0-1）
     segment_median_pers: list[float] = []  # 各セグメント競合のPER中央値（Agent2が収集）
+
+    @field_validator('peer_pers', 'peer_ev_ebitdas', 'segment_weights', 'segment_median_pers', mode='before')
+    @classmethod
+    def _parse_float_list(cls, v):
+        """LLMがJSON文字列またはカンマ区切り文字列で渡した場合も正しく解析する。"""
+        if isinstance(v, str):
+            try:
+                return [float(x) for x in _json.loads(v)]
+            except Exception:
+                try:
+                    return [float(x.strip()) for x in v.split(',') if x.strip()]
+                except Exception:
+                    return []
+        if isinstance(v, list):
+            return [float(x) for x in v if x is not None]
+        return v
+
+    @field_validator('segment_names', mode='before')
+    @classmethod
+    def _parse_str_list(cls, v):
+        """segment_namesがJSON文字列で渡された場合も正しく解析する。"""
+        if isinstance(v, str):
+            try:
+                return _json.loads(v)
+            except Exception:
+                return [x.strip() for x in v.split(',') if x.strip()]
+        return v
 
 
 class DCFValuationTool(BaseTool):
@@ -88,6 +143,19 @@ class DCFValuationTool(BaseTool):
 
         if not p.free_cash_flows:
             return {"error": "free_cash_flows が空です"}
+
+        # FCF規模チェック: 正のFCFが極端にばらついている場合に四半期データ混入等を警告
+        _pos_fcfs = [f for f in p.free_cash_flows if f > 0]
+        _fcf_scale_warning = ""
+        if len(_pos_fcfs) >= 2:
+            _min_fcf, _max_fcf = min(_pos_fcfs), max(_pos_fcfs)
+            if _max_fcf > 0 and _min_fcf / _max_fcf < 0.1:
+                _fcf_scale_warning = (
+                    f"⚠️ FCF異常値警告: 入力FCFの最小値({_format_jpy(_min_fcf)})が"
+                    f"最大値({_format_jpy(_max_fcf)})の10%未満です。"
+                    "四半期データの混入・単位ミス（百万円単位入力等）を確認してください。"
+                )
+                logger.warning(_fcf_scale_warning)
 
         # WACC計算 (CAPM)
         note = ""  # 各種警告・注記を格納（後でresに追加）
@@ -247,6 +315,8 @@ class DCFValuationTool(BaseTool):
             res["segment_cagr_note"] = segment_cagr_note
         if margin_drift_note:
             res["margin_drift_note"] = margin_drift_note
+        if _fcf_scale_warning:
+            res["fcf_scale_warning"] = _fcf_scale_warning
         if note:
             res["note"] = note
         return res
@@ -331,10 +401,14 @@ class MultiplesValuationTool(BaseTool):
             spread = p.roic - p.base_wacc
             if spread < 0:
                 result["value_trap_warning"] = (
-                    f"⚠️ バリュートラップ警告: ROIC({p.roic:.2%}) < WACC({p.base_wacc:.2%})。"
+                    f"⚠️ 価値破壊懸念: ROIC({p.roic:.2%}) < WACC({p.base_wacc:.2%})、"
                     f"スプレッド = {spread:.2%}。"
-                    "投下資本が資本コストを下回る価値破壊状態です。"
-                    "「割安」判定であっても、ROICがWACCを継続的に下回る限り理論的株価上昇余地は限定的です。"
+                    "【重要】この数値をそのままバリュートラップと断定しないこと。"
+                    "必ず以下の観点で「一時的低下」か「構造的低収益」かを判断してレポートに記載すること: "
+                    "(1)業界サイクル・大型設備投資集中期による一時的ROIC低下の可能性 "
+                    "(2)セグメント別ROIC差異（高ROIC事業が低ROIC事業に引き下げられていないか） "
+                    "(3)CCC圧縮・遊休資産削減によるROIC改善余地の有無。"
+                    "構造的低収益と判断した場合のみ「バリュートラップリスク」として投資判断に反映すること。"
                 )
             else:
                 result["value_creation_note"] = (

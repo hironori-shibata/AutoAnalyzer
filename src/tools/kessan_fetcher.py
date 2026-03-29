@@ -2,10 +2,15 @@
 決算短信取得・PDF変換ツール
 IR BankのtdnetページからPDF形式の決算短信を取得し、
 doclingを使ってMarkdownに変換して返す。
+
+メモリ対策: PDFを1ページずつ一時ファイルに書き出し、doclingで変換後に
+gc.collect() で即時解放する。最大メモリ消費量を「1ページ分」に固定する。
 """
+import gc
 import os
 import re
 import time
+import tempfile
 from bs4 import BeautifulSoup
 from loguru import logger
 from crewai.tools import BaseTool
@@ -109,16 +114,66 @@ class KessanFetcherTool(BaseTool):
         return self._convert_pdf_to_markdown(pdf_url, ticker)
 
     def _convert_pdf_to_markdown(self, pdf_url: str, ticker: str) -> str:
-        """doclingを使ってPDFをMarkdownに変換し、data/{ticker}/に保存する"""
+        """
+        PDFを1ページずつ docling で変換し、結合した Markdown を返す。
+
+        手順:
+          1. PDF をバイト列でダウンロード
+          2. PyMuPDF でページ数を取得
+          3. 各ページを単一ページの一時 PDF として書き出す
+          4. docling で変換 → Markdown 取得
+          5. 一時ファイル削除 + gc.collect() でメモリ解放
+          6. 全ページの Markdown を結合して保存
+        """
         try:
+            import fitz  # PyMuPDF
             from docling.document_converter import DocumentConverter
 
-            logger.info(f"docling PDF変換開始: {pdf_url}")
-            time.sleep(1)  # 礼儀としてのsleep
+            logger.info(f"PDF ダウンロード開始: {pdf_url}")
+            time.sleep(1)
+            res = safe_get(pdf_url)
+            if res is None:
+                return "ERROR: PDF のダウンロードに失敗しました"
 
+            pdf_bytes = res.content
+            src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            total_pages = src_doc.page_count
+            logger.info(f"総ページ数: {total_pages}")
+
+            pages_md: list[str] = []
             converter = DocumentConverter()
-            result = converter.convert(pdf_url)
-            md = result.document.export_to_markdown()
+
+            for page_idx in range(total_pages):
+                logger.info(f"変換中: {page_idx + 1}/{total_pages} ページ")
+                # 1ページだけの一時 PDF を作成
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                try:
+                    single = fitz.open()
+                    single.insert_pdf(src_doc, from_page=page_idx, to_page=page_idx)
+                    single.save(tmp_path)
+                    single.close()
+                    del single
+
+                    result = converter.convert(tmp_path)
+                    page_md = result.document.export_to_markdown()
+                    pages_md.append(page_md)
+
+                    # docling の内部状態を解放
+                    del result
+                    gc.collect()
+                except Exception as e:
+                    logger.warning(f"ページ {page_idx + 1} の変換失敗（スキップ）: {e}")
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+
+            src_doc.close()
+            del src_doc, pdf_bytes
+            gc.collect()
+
+            md = "\n\n---\n\n".join(pages_md)
 
             # data/{ticker}/ に保存
             save_dir = f"data/{ticker}"
@@ -126,13 +181,13 @@ class KessanFetcherTool(BaseTool):
             save_path = os.path.join(save_dir, "kessan_tansin.md")
             with open(save_path, "w", encoding="utf-8") as f:
                 f.write(md)
-            logger.info(f"決算短信Markdown保存: {save_path}")
+            logger.info(f"決算短信Markdown保存: {save_path} ({total_pages}ページ)")
 
             return md
 
-        except ImportError:
-            logger.error("docling がインストールされていません: pip install docling")
-            return "ERROR: docling がインストールされていません"
+        except ImportError as e:
+            logger.error(f"必要ライブラリが不足しています: {e}")
+            return f"ERROR: 必要ライブラリが不足しています: {e}"
         except Exception as e:
             logger.error(f"PDF変換失敗: {e}")
             return f"ERROR: PDF変換に失敗しました: {e}"

@@ -9,6 +9,7 @@ from src.agents.agent6_manager import create_agent6
 def create_task6(
     ticker: str,
     task1: Task,
+    task2a: Task,
     task2: Task,
     task3: Task,
     task4: Task,
@@ -34,6 +35,8 @@ def create_task6(
             "5. 株価・需給の評価（Agent5の結果から）\n"
             "6. DCF法による理論株価（DCFValuationToolで計算）\n"
             "   - Agent4から: 過去5〜10年の【確定通期実績】に基づくFCFリスト（free_cash_flowsパラメータ）\n"
+            "     ⚠️【単位】IRBankFinancialTableToolのcf.free_cfはすべて1円単位（例: 1000億円=100,000,000,000）。\n"
+            "     そのまま free_cash_flows に渡すこと。億・万・百万など他単位への変換は一切不要・禁止。\n"
             "   - Agent3から: 最新の営業利益率、発行済株式数、純有利子負債、負債比率\n"
             "   - 成長率（revenue_cagr）: Agent4のセグメント別CAGRと構成比が揃っている場合は、"
             "     segment_names・segment_weights・segment_growth_rates パラメータに渡してセグメント別加重平均CAGRを使用すること。"
@@ -43,7 +46,8 @@ def create_task6(
             "     高利益セグメント拡大なら+0.01〜+0.02、変化なしなら0.0）。"
             "     0以外を設定した場合はレポートの前提条件にその根拠を明記すること。\n"
             "   - ⚠️ DCFの入力（free_cash_flows）には、Agent3による四半期からの年間化推定値ではなく、必ずAgent4が収集した『確定した複数年実績』を使用すること。\n"
-            "   - ⚠️ レポートには必ず、DCFValuationToolの結果に含まれる【将来7年間の予測FCFリスト】をテーブル形式で明示し、計算の透明性を確保すること。\n"
+            "   - ⚠️ レポートには必ず、DCFValuationToolの結果に含まれる【projected_fcf_table_markdown】フィールドをそのまま貼り付けること。\n"
+            "     このフィールドには正確なラベル（例: 1,034億円）が事前に計算されている。LLMが独自に円単位→兆億変換を行うことは禁止。\n"
             "   - ⚠️ EVおよび株主価値をレポートに記載する際は、ツール結果の enterprise_value_label・equity_value_label フィールド（例: '1兆197億円'）をそのまま使用すること。自分で円単位の数値を兆・億に変換してはならない。\n"
             "   - ⚠️【継続価値の記載について】ツール結果には2種類のフィールドがある:\n"
             "       ・terminal_value_undiscounted = 未割引TV（参考値のみ）← レポートに記載しない\n"
@@ -53,20 +57,12 @@ def create_task6(
             "   - ⚠️ DCFValuationToolの結果に含まれる【感応度分析テーブル（sensitivity_table_markdown）】を\n"
             "     必ずレポートのセクション6-1にそのまま掲載すること（WACC±1%×g±0.5%の3×5マトリックス）。\n"
             "   - sensitivity_wacc_base・sensitivity_g_base フィールドでベースケース（WACC・g）を確認すること。\n"
-            "6-補足. SOTP法による理論株価（SOTPValuationToolで計算）【多セグメント企業の場合】\n"
-            "   - 事業性格・成長率が著しく異なる複数セグメントを持つ企業に実施すること。\n"
-            "   - 各セグメントのEBITDAはAgent3から、EV/EBITDA倍率はAgent2のセグメント別競合EV/EBITDA中央値から取得。\n"
-            "   - EV/EBITDAが取得できない場合は earnings × per_multiple（PER法）でフォールバックすること。\n"
-            "   - 結果の segment_results テーブルをセクション6-1に掲載すること。\n"
-            "   - 単一セグメント企業またはデータ不足の場合は「SOTP法: 対象外」と記載してスキップすること。\n"
             "7. マルチプル法による理論株価（MultiplesValuationToolで計算）\n"
+            "   - PER法のみを使用すること（EV/EBITDA法・SOTP法は実施しない）。\n"
             "   - PER法: Agent2から競合他社のPER（peer_pers）、Agent3から対象企業のEPS（target_eps）\n"
             "   - PER法（セグメント別加重）: Agent2がセグメント別競合PERテーブルを収集した場合は、"
             "     segment_names・segment_weights・segment_median_pers パラメータも渡してセグメント加重PERを使用すること。"
             "     収集できなかった場合はpeer_persのみで計算し「全体中央値PER使用」と明記すること。\n"
-            "   - EV/EBITDA法（任意）: Agent2が競合EV/EBITDAを収集できた場合のみ実施。\n"
-            "     peer_ev_ebitdas・target_ebitda・target_net_debt・target_shares を渡すこと。\n"
-            "     データが取得できない場合はPER法のみで算定し「EV/EBITDA: データ不足のためPER法のみ」と1行記載してよい。\n"
             "   - ⚠️ 競合データが不足している場合、LLMの判断で勝手に数値を仮定することは厳禁。データがない場合はその旨を正直に記載すること。\n"
             "8. 現在株価との乖離率と総合評価\n"
             "   【必須ルール】乖離率・割高割安の判定は必ず ValuationComparisonTool で計算すること。\n"
@@ -74,7 +70,6 @@ def create_task6(
             "   - current_price: Agent5から取得した現在株価（円）\n"
             "   - dcf_intrinsic_price: DCFValuationToolの intrinsic_price_per_share\n"
             "   - multiples_per_price: MultiplesValuationToolの per_method.per_implied_price\n"
-            "   - multiples_ev_ebitda_price: MultiplesValuationToolの ev_ebitda_method.ev_ebitda_implied_price（あれば）\n"
             "   ツール結果の judgment（割高/割安）と summary（例: '現在株価は理論値比 +22.9% 割高'）をそのまま使用すること。\n"
             "   両手法の判定が異なる場合はその背景・理由を考察すること。\n"
             "   - roic: Agent3のFinancialCalcToolで計算したROIC（例: 0.035）を渡すこと。\n"
@@ -122,11 +117,10 @@ def create_task6(
             "## 5. 株価・需給状況\n"
             "## 6. 企業価値算定\n"
             "### 6-1. DCF法による企業価値\n"
-            "   - 前提条件（WACC、成長率等・セグメント別加重平均CAGRを使用した場合はその内訳）に加え、将来7年間の予測FCFテーブルを必ず含めること。\n"
+            "   - 前提条件（WACC、成長率等・セグメント別加重平均CAGRを使用した場合はその内訳）に加え、DCFValuationToolのprojected_fcf_table_markdownをそのまま貼り付けること。\n"
             "   - 継続価値（TV）の計算結果と、それが全体の企業価値に占める割合（%）も記載すること。\n"
             "   - 感応度分析テーブル（WACC×g マトリックス 3行×5列）を含むこと。\n"
-            "   - （多セグメント企業の場合）SOTPValuationToolのsegment_results テーブルを含むこと。\n"
-            "### 6-2. マルチプル法（PER法＋EV/EBITDA法）\n"
+            "### 6-2. マルチプル法（PER法）\n"
             "   - セグメント加重PERを使用した場合はその内訳（セグメント名/構成比/競合PER中央値）を記載すること\n"
             "### 6-3. 総合評価・現在株価との乖離\n"
             "   - 各手法の割高/割安判定（符号付き乖離率）を明確に記載すること\n"
@@ -143,5 +137,5 @@ def create_task6(
             "   - 免責事項（1行）"
         ),
         agent=agent,
-        context=[task1, task2, task3, task4, task5],  # 全Agentの結果を参照
+        context=[task1, task2a, task2, task3, task4, task5],  # 全Agentの結果を参照
     )

@@ -70,12 +70,15 @@ class JinaReaderTool(BaseTool):
         try:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(res.content, "html.parser")
-            
+
+            main = soup.find("main")
+            target = main if main else soup
+
             # 不要なタグを除去
-            for tag in soup(["script", "style", "header", "footer", "nav"]):
+            for tag in target(["script", "style", "header", "footer", "nav"]):
                 tag.decompose()
-                
-            text = soup.get_text(separator="\n", strip=True)
+
+            text = target.get_text(separator="\n", strip=True)
             
             # 連続する改行を圧縮
             import re

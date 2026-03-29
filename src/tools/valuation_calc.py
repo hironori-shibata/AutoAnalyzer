@@ -144,7 +144,7 @@ class DCFValuationTool(BaseTool):
         if not p.free_cash_flows:
             return {"error": "free_cash_flows が空です"}
 
-        # FCF規模チェック: 正のFCFが極端にばらついている場合に四半期データ混入等を警告
+        # FCF規模チェック1: 正のFCFが極端にばらついている場合に四半期データ混入等を警告
         _pos_fcfs = [f for f in p.free_cash_flows if f > 0]
         _fcf_scale_warning = ""
         if len(_pos_fcfs) >= 2:
@@ -156,6 +156,28 @@ class DCFValuationTool(BaseTool):
                     "四半期データの混入・単位ミス（百万円単位入力等）を確認してください。"
                 )
                 logger.warning(_fcf_scale_warning)
+
+        # FCF規模チェック2: FCFが営業利益率×売上を大幅超過していないか（投資CF符号ミスの検出）
+        # Agent6からoperating_marginが渡されている場合のみ実施
+        # FCFは通常「営業CF - 設備投資」であり、営業利益の0〜200%程度に収まる。
+        # FCFが営業利益の3倍以上になる場合、投資CFの符号ミス（-を+として計算）の疑いがある。
+        _base_fcf_check = p.free_cash_flows[-1]
+        if (p.operating_margin > 0 and _base_fcf_check > 0
+                and hasattr(p, '_revenue_hint')):
+            pass  # revenue_hintは現在パラメータに含まれていないためスキップ
+        # 簡易チェック: FCFリストの中央値が最大値の2倍以上 → 過去データに異常値が混在
+        if len(_pos_fcfs) >= 3:
+            import statistics as _stats
+            _median_fcf = _stats.median(_pos_fcfs)
+            if _base_fcf_check > _median_fcf * 2.5:
+                _warn = (
+                    f"⚠️ FCF過大警告: 最新FCF({_format_jpy(_base_fcf_check)})が"
+                    f"過去中央値({_format_jpy(_median_fcf)})の2.5倍超です。"
+                    "投資CFの符号ミス（正負逆転）または営業CFをFCFとして誤入力している可能性があります。"
+                    "FCF = 営業CF + 投資CF（投資CFはマイナス値）を再確認してください。"
+                )
+                _fcf_scale_warning = (_fcf_scale_warning + "\n" + _warn).strip()
+                logger.warning(_warn)
 
         # WACC計算 (CAPM)
         note = ""  # 各種警告・注記を格納（後でresに追加）
@@ -280,11 +302,24 @@ class DCFValuationTool(BaseTool):
                        for i in range(len(_g_deltas))]
         sensitivity_md = "\n".join([_tbl_header, _tbl_sep] + _tbl_rows)
 
+        # 予測FCFテーブル（LLMによる桁誤読を防ぐため事前にMarkdown化）
+        _fcf_tbl_rows = [
+            f"| {t}年目 | {round(f):,} | {_format_jpy(f)} |"
+            for t, f in enumerate(projected_fcfs, 1)
+        ]
+        projected_fcf_table_md = (
+            "| 年度 | 予測FCF（円） | 金額 |\n"
+            "|------|--------------|------|\n"
+            + "\n".join(_fcf_tbl_rows)
+        )
+
         res = {
             "method": "DCF法",
             "growth_rate_used": round(growth_rate, 4),
             "wacc": round(wacc, 4),
             "projected_fcfs": [round(f) for f in projected_fcfs],
+            "projected_fcf_labels": [_format_jpy(f) for f in projected_fcfs],
+            "projected_fcf_table_markdown": projected_fcf_table_md,
             # --- 事業価値（予測期間FCFの現在価値合計）---
             "pv_fcfs": round(pv_fcfs),
             "pv_fcfs_label": _format_jpy(pv_fcfs),
@@ -395,26 +430,6 @@ class MultiplesValuationTool(BaseTool):
             result["ev_ebitda_method"] = {
                 "error": "EV/EBITDA法にはtarget_ebitda・target_net_debt・target_sharesも必要です。"
             }
-
-        # ROIC vs WACC バリュートラップ判定（両方 > 0 の場合のみ）
-        if p.roic > 0 and p.base_wacc > 0:
-            spread = p.roic - p.base_wacc
-            if spread < 0:
-                result["value_trap_warning"] = (
-                    f"⚠️ 価値破壊懸念: ROIC({p.roic:.2%}) < WACC({p.base_wacc:.2%})、"
-                    f"スプレッド = {spread:.2%}。"
-                    "【重要】この数値をそのままバリュートラップと断定しないこと。"
-                    "必ず以下の観点で「一時的低下」か「構造的低収益」かを判断してレポートに記載すること: "
-                    "(1)業界サイクル・大型設備投資集中期による一時的ROIC低下の可能性 "
-                    "(2)セグメント別ROIC差異（高ROIC事業が低ROIC事業に引き下げられていないか） "
-                    "(3)CCC圧縮・遊休資産削減によるROIC改善余地の有無。"
-                    "構造的低収益と判断した場合のみ「バリュートラップリスク」として投資判断に反映すること。"
-                )
-            else:
-                result["value_creation_note"] = (
-                    f"✅ 価値創造確認: ROIC({p.roic:.2%}) > WACC({p.base_wacc:.2%})。"
-                    f"スプレッド = +{spread:.2%}。株主価値を創造しています。"
-                )
 
         return result
 
@@ -613,5 +628,25 @@ class ValuationComparisonTool(BaseTool):
             avg_price = sum(prices) / len(prices)
             result["average"] = _calc(avg_price)
             result["average"]["avg_intrinsic_price"] = round(avg_price, 2)
+
+        # ROIC vs WACC バリュートラップ判定（両方 > 0 の場合のみ）
+        if p.roic > 0 and p.base_wacc > 0:
+            spread = p.roic - p.base_wacc
+            if spread < 0:
+                result["value_trap_warning"] = (
+                    f"⚠️ 価値破壊懸念: ROIC({p.roic:.2%}) < WACC({p.base_wacc:.2%})、"
+                    f"スプレッド = {spread:.2%}。"
+                    "【重要】この数値をそのままバリュートラップと断定しないこと。"
+                    "必ず以下の観点で「一時的低下」か「構造的低収益」かを判断してレポートに記載すること: "
+                    "(1)業界サイクル・大型設備投資集中期による一時的ROIC低下の可能性 "
+                    "(2)セグメント別ROIC差異（高ROIC事業が低ROIC事業に引き下げられていないか） "
+                    "(3)CCC圧縮・遊休資産削減によるROIC改善余地の有無。"
+                    "構造的低収益と判断した場合のみ「バリュートラップリスク」として投資判断に反映すること。"
+                )
+            else:
+                result["value_creation_note"] = (
+                    f"✅ 価値創造確認: ROIC({p.roic:.2%}) > WACC({p.base_wacc:.2%})。"
+                    f"スプレッド = +{spread:.2%}。株主価値を創造しています。"
+                )
 
         return result

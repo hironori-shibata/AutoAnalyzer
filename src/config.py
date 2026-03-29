@@ -39,6 +39,16 @@ def get_reasoner_llm() -> LLM:
         timeout=400,
     )
 
+def get_perplexity_llm() -> LLM:
+    """Perplexity Sonar (OpenRouter経由) LLMインスタンスを返す。
+    sonarはウェブ検索を内蔵しているため、外部検索ツール不要。"""
+    return LLM(
+        model="openrouter/perplexity/sonar",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        temperature=0.2,
+        timeout=400,
+    )
+
 # ===== 共通定数 =====
 DATA_DIR = "data"
 EDINET_CODE_LIST_CSV = os.path.join(DATA_DIR, "edinet_code_list.csv")

@@ -6,7 +6,7 @@ LLMには数値計算をさせない。
 """
 from crewai import Agent
 from src.config import get_llm
-from src.tools.irbank_scraper import IRBankScraperTool
+from src.tools.irbank_scraper import IRBankScraperTool, IRBankFinancialTableTool
 from src.tools.financial_calc import TrendAnalysisTool
 
 
@@ -22,7 +22,7 @@ def create_agent4() -> Agent:
             "あなたは長期投資家の視点から企業の業績推移を分析する専門家です。"
             "5〜10年の時系列データから企業の実力と成長軌道を読み解きます。"
         ),
-        tools=[IRBankScraperTool(), TrendAnalysisTool()],
+        tools=[IRBankFinancialTableTool(), IRBankScraperTool(), TrendAnalysisTool()],
         llm=get_llm(),
         verbose=True,
         max_iter=25,

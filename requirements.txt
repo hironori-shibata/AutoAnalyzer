@@ -27,3 +27,4 @@ python-dotenv
 pydantic
 loguru
 litellm
+google-generativeai

@@ -20,6 +20,16 @@ TICKER_PATTERN = re.compile(r"^\s*(\d{4})\s*$")
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
 
+@app.message(re.compile(r"^(?!\s*\d{4}\s*$)"))
+def handle_invalid(message, say):
+    """4桁の証券番号以外のメッセージを受信したときの処理"""
+    thread_ts = message.get("thread_ts") or message["ts"]
+    say(
+        text="4桁の銘柄コードを送信してください（例: `7203`）。",
+        thread_ts=thread_ts,
+    )
+
+
 @app.message(TICKER_PATTERN)
 def handle_ticker(message, say, client):
     """4桁の証券番号を受信したときの処理"""

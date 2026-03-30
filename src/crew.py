@@ -15,12 +15,17 @@ from src.tools.edinet_client import get_document_code
 from src.utils.report_formatter import add_report_header
 
 from src.tasks.task1_yuho import create_task1
-from src.tasks.task2a_rival_data import create_task2a
+from src.tasks.task_gemini import create_task_gemini
 from src.tasks.task2_rival import create_task2
+from src.tasks.task2a_rival_data import create_task2a
+from src.tasks.task2b_rival_report import create_task2b
 from src.tasks.task3_kessan import create_task3
 from src.tasks.task4_performance import create_task4
 from src.tasks.task5_stock import create_task5
 from src.tasks.task6_report import create_task6
+from src.tasks.task7_critic import create_task7
+from src.tasks.task8_investor import create_task8
+from src.tasks.task_news import create_task_news
 
 
 def _make_event_logger(event_log_path: str, crew_name: str, tasks: list):
@@ -239,15 +244,23 @@ def run_analysis(ticker: str) -> str:
 
     # Step 3: タスク生成
     task1 = create_task1(ticker, edinet_code, document_code)
-    task2a = create_task2a(ticker)                           # 競合定量データ収集 (DeepSeek + StockScraperTool)
-    task2 = create_task2(ticker, task2a)                     # 競合定性分析 (Perplexity Sonar, context=task2a)
+    task_gemini = create_task_gemini(ticker, task1)          # 対象企業ディープリサーチ (Gemini公式API, context=task1)
+    task2 = create_task2(ticker)                             # 競合情報収集 (Perplexity Sonar, contextなし)
+    task2a = create_task2a(ticker, task2)                    # 競合定量データ収集 (DeepSeek + StockScraperTool, context=task2)
+    task2b = create_task2b(ticker, task2, task2a)            # 競合統合レポート作成 (DeepSeek, context=[task2, task2a])
     task3 = create_task3(ticker)
     task4 = create_task4(ticker, edinet_code)
     task5 = create_task5(ticker, edinet_code)
-    task6 = create_task6(ticker, task1, task2a, task2, task3, task4, task5)
+    task_news = create_task_news(ticker, task1)
+    task6 = create_task6(ticker, task1, task_gemini, task2a, task2b, task3, task4, task5, task_news)
+    task7 = create_task7(ticker, task6, task2b)
+    task8 = create_task8(ticker, task6, task7, task2b)
 
     # Step 4: Crew構築・実行
-    # Agent1〜5を順次実行し、Agent6が context=[task1..task5] で全結果を集約して最終レポートを生成する
+    # Agent1〜5を順次実行し、Agent6が context=[task1..task5] で全結果を集約して最終レポートを生成する。
+    # Agent_newsは企業のセクターを起点に業界・地政学ニュースを同心円状に収集する。
+    # Agent7はAgent6のレポートに対して批判的・反論的な視点からチャレンジする。
+    # Agent8は両レポートを第三者として精査し、最終投資判断を下す。
     log_dir = f"data/{ticker}"
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = f"{log_dir}/crew_execution.log"
@@ -256,7 +269,7 @@ def run_analysis(ticker: str) -> str:
     crew_name = f"AutoAnalyzer_{ticker}"
 
     # ローカルイベントログ（JSONL）にAgent識別・全フィールド完全出力で記録する。
-    all_tasks = [task1, task2a, task2, task3, task4, task5, task6]
+    all_tasks = [task1, task_gemini, task2, task2a, task2b, task3, task4, task5, task_news, task6, task7, task8]
     step_cb, task_cb = _make_event_logger(event_log_path, crew_name, all_tasks)
 
     # 実行開始イベントを記録
@@ -272,14 +285,19 @@ def run_analysis(ticker: str) -> str:
         name=crew_name,  # Enterprise ダッシュボードでの識別に使用
         agents=[
             task1.agent,
-            task2a.agent,
+            task_gemini.agent,
             task2.agent,
+            task2a.agent,
+            task2b.agent,
             task3.agent,
             task4.agent,
             task5.agent,
+            task_news.agent,
             task6.agent,
+            task7.agent,
+            task8.agent,
         ],
-        tasks=[task1, task2a, task2, task3, task4, task5, task6],
+        tasks=[task1, task_gemini, task2, task2a, task2b, task3, task4, task5, task_news, task6, task7, task8],
         process=Process.sequential,  # task6 が context で 1〜5 を参照するため sequential
         verbose=True,
         output_log_file=log_file_path,
@@ -310,8 +328,15 @@ def run_analysis(ticker: str) -> str:
             }, ensure_ascii=False) + "\n")
         logger.info(f"Crew実行終了: {crew_name} status={status}")
 
-    # Step 5: レポート文字列を取得
-    if hasattr(result, "raw"):
+    # Step 5: レポート文字列を取得（Agent6本文 + Agent7反論 + Agent8最終判断を結合）
+    main_report = task6.output.raw if (task6.output and hasattr(task6.output, "raw")) else ""
+    critic_section = task7.output.raw if (task7.output and hasattr(task7.output, "raw")) else ""
+    final_judgment = task8.output.raw if (task8.output and hasattr(task8.output, "raw")) else ""
+
+    sections = [s for s in [main_report, critic_section, final_judgment] if s]
+    if sections:
+        report_text = "\n\n---\n\n".join(s.rstrip() for s in sections)
+    elif hasattr(result, "raw"):
         report_text = result.raw
     else:
         report_text = str(result)

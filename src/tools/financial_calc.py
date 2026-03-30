@@ -126,8 +126,8 @@ class FinancialCalcTool(BaseTool):
 # ===== TrendAnalysisTool =====
 
 class TrendAnalysisInput(BaseModel):
-    values: list[float]   # 時系列データ（古い順）
-    years: list[int]      # 対応する年度リスト
+    values: list[float | None]   # 時系列データ（古い順）。null は自動除去される
+    years: list[int]             # 対応する年度リスト
 
 
 class TrendAnalysisTool(BaseTool):
@@ -144,8 +144,11 @@ class TrendAnalysisTool(BaseTool):
     args_schema: type[BaseModel] = TrendAnalysisInput
 
     def _run(self, values: list, years: list) -> dict:
-        if len(values) < 2:
-            return {"error": "データが2件以上必要です"}
+        # null/None を含むペアを除去する
+        filtered = [(v, y) for v, y in zip(values, years) if v is not None]
+        if len(filtered) < 2:
+            return {"error": "有効なデータ（null以外）が2件以上必要です"}
+        values, years = [v for v, _ in filtered], [y for _, y in filtered]
 
         n = len(values) - 1
         

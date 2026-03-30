@@ -49,6 +49,29 @@ def get_perplexity_llm() -> LLM:
         timeout=400,
     )
 
+def get_gemini_llm() -> LLM:
+    """Google Gemini Flash (公式API) LLMインスタンスを返す。
+    Google Search Grounding による最新ウェブ情報収集に対応。
+    モデル名は環境に合わせて GEMINI_MODEL 環境変数で上書き可能。
+    デフォルト: gemini-2.0-flash（要 GOOGLE_API_KEY）"""
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    return LLM(
+        model=f"gemini/{model}",
+        api_key=os.environ["GOOGLE_API_KEY"],
+        temperature=0.2,
+        timeout=400,
+    )
+
+def get_chatgpt_llm() -> LLM:
+    """ChatGPT 5.4 (OpenRouter経由) LLMインスタンスを返す。Agent7反論エージェント用。"""
+    return LLM(
+        model="openrouter/openai/gpt-5.4-mini",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        temperature=0.3,
+        timeout=400,
+        max_tokens=4096,
+    )
+
 # ===== 共通定数 =====
 DATA_DIR = "data"
 EDINET_CODE_LIST_CSV = os.path.join(DATA_DIR, "edinet_code_list.csv")

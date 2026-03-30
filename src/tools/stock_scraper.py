@@ -66,6 +66,10 @@ class StockScraperTool(BaseTool):
             from bs4 import BeautifulSoup
             import re
             soup = BeautifulSoup(res.content, "html.parser")
+            # kabutan は div#main 内のコンテンツのみ取得
+            if source in ("kabutan_stock", "kabutan_margin"):
+                main_div = soup.find("div", id="main")
+                soup = main_div if main_div else soup
             for tag in soup(["script", "style", "nav", "header", "footer"]):
                 tag.decompose()
             text = soup.get_text(separator="\n", strip=True)

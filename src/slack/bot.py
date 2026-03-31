@@ -52,6 +52,10 @@ def handle_ticker(message, say, client):
     def run():
         """バックグラウンドスレッドで分析を実行"""
         try:
+            # スレッド内での環境変数の確認用ログ
+            tracing_status = os.environ.get("CREWAI_TRACING_ENABLED", "false")
+            logger.info(f"子スレッド分析開始: CREWAI_TRACING_ENABLED={tracing_status}")
+
             report = run_analysis(ticker)
             send_report(client, channel, thread_ts, ticker, report)
         except Exception as e:

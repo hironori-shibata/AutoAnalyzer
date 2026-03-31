@@ -191,6 +191,13 @@ def _check_crewai_auth() -> None:
     本関数はそれを事前に検出してログ警告を出す。
     分析自体は認証状態に関わらず継続する。
     """
+    # Tracing が有効になっているかチェック
+    if os.environ.get("CREWAI_TRACING_ENABLED", "false").lower() != "true":
+        logger.warning(
+            "⚠️ CREWAI_TRACING_ENABLED が ON になっていません。"
+            " Enterprise Traces が無効のまま実行される可能性があります。"
+        )
+
     try:
         from crewai.cli.authentication.token import get_auth_token, AuthError  # type: ignore
         token = get_auth_token()
@@ -220,6 +227,9 @@ def run_analysis(ticker: str) -> str:
     Returns:
         Markdown形式の企業価値分析レポート文字列
     """
+    # Enterprise トレーシングを確実に有効化（ThreadPoolExecutor 子スレッド用の再セット）
+    os.environ["CREWAI_TRACING_ENABLED"] = "true"
+
     # CrewAI Enterprise 認証状態を事前確認（トークン期限切れ警告）
     _check_crewai_auth()
 
@@ -300,7 +310,7 @@ def run_analysis(ticker: str) -> str:
         tasks=[task1, task_gemini, task2, task2a, task2b, task3, task4, task5, task_news, task6, task7, task8],
         process=Process.sequential,  # task6 が context で 1〜5 を参照するため sequential
         verbose=True,
-        output_log_file=log_file_path,
+        output_log_file=log_file_path, #debugの一時的なコメントアウト
         step_callback=step_cb,
         task_callback=task_cb,
         # Enterprise Batches/Traces で Completed に更新されるために必要。

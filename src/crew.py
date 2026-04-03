@@ -21,14 +21,20 @@ from src.tasks.task2a_rival_data import create_task2a
 from src.tasks.task2b_rival_report import create_task2b
 from src.tasks.task3_kessan import create_task3
 from src.tasks.task4_performance import create_task4
-from src.tasks.task5_stock import create_task5
 from src.tasks.task6_report import create_task6
 from src.tasks.task7_critic import create_task7
 from src.tasks.task8_investor import create_task8
 from src.tasks.task_news import create_task_news
 
 
-def _make_event_logger(event_log_path: str, crew_name: str, tasks: list):
+def _make_event_logger(
+    event_log_path: str,
+    crew_name: str,
+    tasks: list,
+    slack_client=None,
+    slack_channel: str = "",
+    slack_thread_ts: str = "",
+):
     """
     CrewAI の step_callback / task_callback 用イベントロガーを返す。
     ローカルの JSON Lines ファイルに全イベントを完全記録する。
@@ -159,6 +165,7 @@ def _make_event_logger(event_log_path: str, crew_name: str, tasks: list):
             if hasattr(task_output, "agent"):
                 agent_role = str(getattr(task_output.agent, "role", task_output.agent))
 
+            raw_output = getattr(task_output, "raw", str(task_output))
             entry = {
                 "event": "task_done",
                 "agent_num": idx + 1,
@@ -166,11 +173,23 @@ def _make_event_logger(event_log_path: str, crew_name: str, tasks: list):
                 "agent_role": agent_role,
                 "task_name": getattr(task_output, "name", ""),
                 "description": getattr(task_output, "description", ""),
-                "raw_output": getattr(task_output, "raw", str(task_output)),
+                "raw_output": raw_output,
                 "summary": getattr(task_output, "summary", ""),
             }
             _write(entry)
             logger.info(f"[TASK DONE] {agent_label} summary={entry['summary'][:120]}")
+
+            # デバッグモード: 各エージェント出力をリアルタイムでSlackに送信
+            from src.config import DEBUG_MODE
+            from src.slack.sender import send_debug_task_output
+            if DEBUG_MODE and slack_client and slack_channel and slack_thread_ts:
+                send_debug_task_output(
+                    slack_client,
+                    slack_channel,
+                    slack_thread_ts,
+                    agent_label,
+                    raw_output,
+                )
 
             # 次のタスク（次の Agent）へカウンターを進める
             _state["task_idx"] += 1
@@ -217,12 +236,20 @@ def _check_crewai_auth() -> None:
         )
 
 
-def run_analysis(ticker: str) -> str:
+def run_analysis(
+    ticker: str,
+    slack_client=None,
+    slack_channel: str = "",
+    slack_thread_ts: str = "",
+) -> str:
     """
     証券番号を受け取り、6 Agentが協調して企業価値分析レポートを生成して返す。
 
     Args:
         ticker: 4桁の証券番号（例: "7203"）
+        slack_client: デバッグモード時に中間出力を送信するSlack WebClient（省略可）
+        slack_channel: 送信先チャンネルID（省略可）
+        slack_thread_ts: 送信先スレッドのts（省略可）
 
     Returns:
         Markdown形式の企業価値分析レポート文字列
@@ -260,9 +287,8 @@ def run_analysis(ticker: str) -> str:
     task2b = create_task2b(ticker, task2, task2a)            # 競合統合レポート作成 (DeepSeek, context=[task2, task2a])
     task3 = create_task3(ticker)
     task4 = create_task4(ticker, edinet_code)
-    task5 = create_task5(ticker, edinet_code)
     task_news = create_task_news(ticker, task1)
-    task6 = create_task6(ticker, task1, task_gemini, task2a, task2b, task3, task4, task5, task_news)
+    task6 = create_task6(ticker, task1, task_gemini, task2a, task2b, task3, task4, task_news)
     task7 = create_task7(ticker, task6, task2b)
     task8 = create_task8(ticker, task6, task7, task2b)
 
@@ -279,8 +305,13 @@ def run_analysis(ticker: str) -> str:
     crew_name = f"AutoAnalyzer_{ticker}"
 
     # ローカルイベントログ（JSONL）にAgent識別・全フィールド完全出力で記録する。
-    all_tasks = [task1, task_gemini, task2, task2a, task2b, task3, task4, task5, task_news, task6, task7, task8]
-    step_cb, task_cb = _make_event_logger(event_log_path, crew_name, all_tasks)
+    all_tasks = [task1, task_gemini, task2, task2a, task2b, task3, task4, task_news, task6, task7, task8]
+    step_cb, task_cb = _make_event_logger(
+        event_log_path, crew_name, all_tasks,
+        slack_client=slack_client,
+        slack_channel=slack_channel,
+        slack_thread_ts=slack_thread_ts,
+    )
 
     # 実行開始イベントを記録
     with open(event_log_path, "a", encoding="utf-8") as f:
@@ -301,13 +332,12 @@ def run_analysis(ticker: str) -> str:
             task2b.agent,
             task3.agent,
             task4.agent,
-            task5.agent,
             task_news.agent,
             task6.agent,
             task7.agent,
             task8.agent,
         ],
-        tasks=[task1, task_gemini, task2, task2a, task2b, task3, task4, task5, task_news, task6, task7, task8],
+        tasks=[task1, task_gemini, task2, task2a, task2b, task3, task4, task_news, task6, task7, task8],
         process=Process.sequential,  # task6 が context で 1〜5 を参照するため sequential
         verbose=True,
         output_log_file=log_file_path, #debugの一時的なコメントアウト

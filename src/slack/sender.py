@@ -35,6 +35,45 @@ def send_report(
         _send_long_text(client, channel, thread_ts, report)
 
 
+def send_debug_task_output(
+    client: WebClient,
+    channel: str,
+    thread_ts: str,
+    agent_label: str,
+    raw_output: str,
+) -> None:
+    """
+    デバッグモード時に各エージェントの中間出力をSlackスレッドに投稿する。
+    3000文字を超える場合はファイルアップロードにフォールバック。
+    """
+    header = f"🔍 *[DEBUG] {agent_label} 完了*"
+    MAX_TEXT_LEN = 2800
+
+    if len(raw_output) <= MAX_TEXT_LEN:
+        text = f"{header}\n```{raw_output}```"
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=text,
+            )
+        except Exception as e:
+            logger.warning(f"デバッグメッセージ送信失敗 ({agent_label}): {e}")
+    else:
+        # 長文はファイルとしてアップロード
+        try:
+            client.files_upload_v2(
+                channel=channel,
+                thread_ts=thread_ts,
+                content=raw_output,
+                filename=f"debug_{agent_label}.md",
+                title=f"[DEBUG] {agent_label}",
+                initial_comment=header,
+            )
+        except Exception as e:
+            logger.warning(f"デバッグファイルアップロード失敗 ({agent_label}): {e}")
+
+
 def _send_long_text(
     client: WebClient,
     channel: str,

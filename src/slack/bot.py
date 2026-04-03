@@ -11,6 +11,7 @@ import concurrent.futures
 
 from src.crew import run_analysis
 from src.slack.sender import send_report
+from src.config import DEBUG_MODE
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
@@ -44,8 +45,9 @@ def handle_ticker(message, say, client):
     logger.info(f"証券番号受信: {ticker} (channel: {channel})")
 
     # 即時返信
+    debug_note = "\n（デバッグモード ON: 各エージェントの中間出力をこのスレッドに送信します）" if DEBUG_MODE else ""
     say(
-        text=f"証券番号 *{ticker}* の企業価値分析を開始します。しばらくお待ちください 🔍",
+        text=f"証券番号 *{ticker}* の企業価値分析を開始します。しばらくお待ちください 🔍{debug_note}",
         thread_ts=thread_ts,
     )
 
@@ -56,7 +58,7 @@ def handle_ticker(message, say, client):
             tracing_status = os.environ.get("CREWAI_TRACING_ENABLED", "false")
             logger.info(f"子スレッド分析開始: CREWAI_TRACING_ENABLED={tracing_status}")
 
-            report = run_analysis(ticker)
+            report = run_analysis(ticker, slack_client=client, slack_channel=channel, slack_thread_ts=thread_ts)
             send_report(client, channel, thread_ts, ticker, report)
         except Exception as e:
             logger.exception(f"分析エラー ({ticker}): {e}")

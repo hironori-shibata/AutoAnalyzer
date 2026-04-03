@@ -4,7 +4,7 @@ Agent1: 有報リサーチャー
 """
 from crewai import Agent
 from src.config import get_llm
-from src.tools.scraping_tools import JinaReaderTool
+from src.tools.irbank_yuho_tool import IRBankYuhoTool
 
 
 def create_agent1() -> Agent:
@@ -19,8 +19,8 @@ def create_agent1() -> Agent:
             "有価証券報告書の各セクションから重要な情報を抽出し、"
             "投資判断に役立つ定性分析を提供することを得意としています。"
         ),
-        tools=[JinaReaderTool()],
+        tools=[IRBankYuhoTool()],
         llm=get_llm(),
         verbose=True,
-        max_iter=25,
+        max_iter=5,
     )

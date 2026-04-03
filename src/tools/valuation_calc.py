@@ -1,5 +1,5 @@
 """
-企業価値計算ツール (DCF法・PER法)
+企業価値計算ツール（逆DCF法・PER法・SOTP法）
 Agent6 (統括マネージャー) が使用する。LLMには計算をさせない。
 """
 import json as _json
@@ -22,59 +22,6 @@ def _format_jpy(value: float) -> str:
     else:
         return f"{oku:,}億円"
 
-
-# ===== DCF法 =====
-
-class DCFInput(BaseModel):
-    free_cash_flows: list[float]       # 過去のFCF（直近3〜5年・古い順）
-    revenue_cagr: float                # 売上CAGR（Agent4から）。segment_weightsとsegment_growth_ratesが揃っている場合は無視される。
-    operating_margin: float            # 営業利益率（Agent3から）
-    shares_outstanding: float          # 発行済株式数
-    net_debt: float                    # 純有利子負債（負なら純現金）
-    tax_rate: float = DCF_DEFAULTS["tax_rate"]
-    capex_ratio: float = DCF_DEFAULTS["capex_ratio"]
-    risk_free_rate: float = DCF_DEFAULTS["risk_free_rate"]
-    equity_risk_premium: float = DCF_DEFAULTS["equity_risk_premium"]
-    beta: float = DCF_DEFAULTS["beta"]
-    debt_cost: float = DCF_DEFAULTS["debt_cost"]
-    debt_ratio: float = DCF_DEFAULTS["debt_ratio"]
-    terminal_growth_rate: float = DCF_DEFAULTS["terminal_growth_rate"]
-    projection_years: int = DCF_DEFAULTS["projection_years"]
-    # セグメント別成長率（提供時はrevenue_cagrの代わりに加重平均で計算）
-    segment_names: list[str] = []         # セグメント名（例: ["エンバイロメント", "デジタル"]）
-    segment_weights: list[float] = []     # 売上構成比（0-1、合計1.0）
-    segment_growth_rates: list[float] = [] # 各セグメントの成長率（年率）
-    # セグメントミックス変化による利益率ドリフト（デフォルト0.0 = 既存挙動と完全一致）
-    # projected_fcf[t] = base_fcf * (1+growth)^t * (1+margin_drift)^t
-    # 例: 低利益セグメント拡大 → -0.01〜-0.02 / 高利益セグメント拡大 → +0.01〜+0.02
-    margin_drift: float = 0.0
-
-    @field_validator('free_cash_flows', 'segment_weights', 'segment_growth_rates', mode='before')
-    @classmethod
-    def _parse_float_list(cls, v):
-        """LLMがJSON文字列またはカンマ区切り文字列で渡した場合も正しく解析する。"""
-        if isinstance(v, str):
-            try:
-                return [float(x) for x in _json.loads(v)]
-            except Exception:
-                try:
-                    return [float(x.strip()) for x in v.split(',') if x.strip()]
-                except Exception:
-                    return []
-        if isinstance(v, list):
-            return [float(x) for x in v if x is not None]
-        return v
-
-    @field_validator('segment_names', mode='before')
-    @classmethod
-    def _parse_str_list(cls, v):
-        """segment_namesがJSON文字列で渡された場合も正しく解析する。"""
-        if isinstance(v, str):
-            try:
-                return _json.loads(v)
-            except Exception:
-                return [x.strip() for x in v.split(',') if x.strip()]
-        return v
 
 
 # ===== マルチプル法 =====
@@ -120,241 +67,6 @@ class MultiplesInput(BaseModel):
             except Exception:
                 return [x.strip() for x in v.split(',') if x.strip()]
         return v
-
-
-class DCFValuationTool(BaseTool):
-    """
-    DCF法で企業価値と理論株価を計算する。
-    """
-    name: str = "DCFValuationTool"
-    description: str = (
-        "DCF法で企業価値と理論株価をPythonで計算する。Agent6が使用する。\n"
-        "【超重要・単位の統一】\n"
-        "金額パラメータ（free_cash_flows, net_debtなど）は必ず【実際の円単位（1円単位）】に換算して入力すること！\n"
-        "（例: 3,003,519百万円 → 3003519000000）。shares_outstanding は単元（株）そのままで入力。"
-    )
-    args_schema: type[BaseModel] = DCFInput
-
-    def _run(self, **kwargs) -> dict:
-        try:
-            p = DCFInput(**kwargs)
-        except Exception as e:
-            return {"error": f"入力パラメータエラー: {e}"}
-
-        if not p.free_cash_flows:
-            return {"error": "free_cash_flows が空です"}
-
-        # FCF規模チェック1: 正のFCFが極端にばらついている場合に四半期データ混入等を警告
-        _pos_fcfs = [f for f in p.free_cash_flows if f > 0]
-        _fcf_scale_warning = ""
-        if len(_pos_fcfs) >= 2:
-            _min_fcf, _max_fcf = min(_pos_fcfs), max(_pos_fcfs)
-            if _max_fcf > 0 and _min_fcf / _max_fcf < 0.1:
-                _fcf_scale_warning = (
-                    f"⚠️ FCF異常値警告: 入力FCFの最小値({_format_jpy(_min_fcf)})が"
-                    f"最大値({_format_jpy(_max_fcf)})の10%未満です。"
-                    "四半期データの混入・単位ミス（百万円単位入力等）を確認してください。"
-                )
-                logger.warning(_fcf_scale_warning)
-
-        # FCF規模チェック2: FCFが営業利益率×売上を大幅超過していないか（投資CF符号ミスの検出）
-        # Agent6からoperating_marginが渡されている場合のみ実施
-        # FCFは通常「営業CF - 設備投資」であり、営業利益の0〜200%程度に収まる。
-        # FCFが営業利益の3倍以上になる場合、投資CFの符号ミス（-を+として計算）の疑いがある。
-        _base_fcf_check = p.free_cash_flows[-1]
-        if (p.operating_margin > 0 and _base_fcf_check > 0
-                and hasattr(p, '_revenue_hint')):
-            pass  # revenue_hintは現在パラメータに含まれていないためスキップ
-        # 簡易チェック: FCFリストの中央値が最大値の2倍以上 → 過去データに異常値が混在
-        if len(_pos_fcfs) >= 3:
-            import statistics as _stats
-            _median_fcf = _stats.median(_pos_fcfs)
-            if _base_fcf_check > _median_fcf * 2.5:
-                _warn = (
-                    f"⚠️ FCF過大警告: 最新FCF({_format_jpy(_base_fcf_check)})が"
-                    f"過去中央値({_format_jpy(_median_fcf)})の2.5倍超です。"
-                    "投資CFの符号ミス（正負逆転）または営業CFをFCFとして誤入力している可能性があります。"
-                    "FCF = 営業CF + 投資CF（投資CFはマイナス値）を再確認してください。"
-                )
-                _fcf_scale_warning = (_fcf_scale_warning + "\n" + _warn).strip()
-                logger.warning(_warn)
-
-        # WACC計算 (CAPM)
-        note = ""  # 各種警告・注記を格納（後でresに追加）
-        re = p.risk_free_rate + p.beta * p.equity_risk_premium
-        wacc = (1 - p.debt_ratio) * re + p.debt_ratio * p.debt_cost * (1 - p.tax_rate)
-
-        # WACC低水準警告（日本株の一般的な範囲 5〜7% を大きく下回る場合）
-        if wacc < 0.045:
-            note += (
-                f"\n⚠️ WACC({wacc:.2%})警告: 日本株では電力・公益セクターでも5〜7%程度が一般的です。"
-                "risk_free_rate・equity_risk_premium・betaの入力値を再確認してください。"
-                "（例: 国債利回り1.5%、ERP 6%、β=1.1 → WACC≒5.88%）"
-            )
-
-        if wacc <= p.terminal_growth_rate:
-            logger.warning("WACC <= 永久成長率。継続価値計算が不安定になるため調整します")
-            wacc = p.terminal_growth_rate + 0.01
-
-        # 成長率の決定：セグメント別データが揃っている場合は加重平均CAGRを使用
-        growth_rate = p.revenue_cagr
-        segment_cagr_note = ""
-        if (p.segment_weights and p.segment_growth_rates
-                and len(p.segment_weights) == len(p.segment_growth_rates)):
-            weighted_cagr = sum(w * g for w, g in zip(p.segment_weights, p.segment_growth_rates))
-            growth_rate = weighted_cagr
-            details = []
-            for i, (w, g) in enumerate(zip(p.segment_weights, p.segment_growth_rates)):
-                name = p.segment_names[i] if i < len(p.segment_names) else f"セグメント{i+1}"
-                details.append(f"{name}: {g*100:.1f}%×{w*100:.0f}%")
-            segment_cagr_note = f"加重平均CAGR={weighted_cagr*100:.2f}% ({', '.join(details)})"
-            logger.info(f"セグメント別加重平均CAGRを使用: {segment_cagr_note}")
-
-        # 直近FCFをベースに将来FCFを予測
-        # (1+margin_drift)^t でセグメントミックス変化による利益率変動を反映
-        # margin_drift=0.0 のとき既存と完全一致（後方互換）
-        base_fcf = p.free_cash_flows[-1]
-        projected_fcfs = [
-            base_fcf * (1 + growth_rate) ** t * (1 + p.margin_drift) ** t
-            for t in range(1, p.projection_years + 1)
-        ]
-        margin_drift_note = ""
-        if p.margin_drift != 0.0:
-            if abs(p.margin_drift) > 0.05:
-                logger.warning(f"margin_drift={p.margin_drift:.3f} が±5%/年を超えています。入力値を確認してください。")
-            margin_drift_note = f"利益率ドリフト={p.margin_drift*100:+.1f}%/年（セグメントミックス変化を反映）"
-            logger.info(f"margin_driftを適用: {margin_drift_note}")
-
-        # FCFの現在価値
-        pv_fcfs = sum(
-            fcf / (1 + wacc) ** t
-            for t, fcf in enumerate(projected_fcfs, 1)
-        )
-
-        # 継続価値 (Gordon Growth Model)
-        terminal_fcf = projected_fcfs[-1] * (1 + p.terminal_growth_rate)
-        tv = terminal_fcf / (wacc - p.terminal_growth_rate)
-        pv_tv = tv / (1 + wacc) ** p.projection_years
-
-        # 株式価値
-        enterprise_value = pv_fcfs + pv_tv
-        equity_value = enterprise_value - p.net_debt
-        intrinsic_price = equity_value / p.shares_outstanding if p.shares_outstanding else None
-        
-        # 継続価値の割合（計算の妥当性チェック用）
-        tv_ratio = pv_tv / enterprise_value if enterprise_value else 0
-
-        # 単位不整合（百万円単位入力）の自動補正
-        # 通常、上場企業の企業価値(円)は発行済株式数(株)よりも十分に大きくなります（理論株価が1円未満になることは稀）。
-        # もし企業価値の数値自体が株数より小さい場合、1,000,000倍の単位ミス（百万円単位での入力）と判定して補正します。
-        scale_factor = 1  # 感応度分析のnet_debt補正に使用
-        if p.shares_outstanding and p.shares_outstanding > 100_000:
-            if enterprise_value < p.shares_outstanding:
-                logger.warning("DCF企業価値が発行済株式数より小さいため、入力値が『百万円単位』と判定し、1,000,000倍に自動補正します。")
-                scale_factor = 1_000_000
-                if intrinsic_price is not None:
-                    intrinsic_price *= 1_000_000
-                enterprise_value *= 1_000_000
-                equity_value *= 1_000_000
-                pv_fcfs *= 1_000_000
-                tv *= 1_000_000
-                pv_tv *= 1_000_000
-                projected_fcfs = [f * 1_000_000 for f in projected_fcfs]
-                note += "※入力された財務数値が百万円単位であったため、計算過程で自動的に1,000,000倍（1円単位）に補正して算定しました。"
-
-        if tv_ratio > 0.75:
-            if tv_ratio > 0.9:
-                note += ("\n※警告【高】: 企業価値の90%超が継続価値で占められています。"
-                         "ターミナル前提（永久成長率・WACC）への感応度が極めて高く、算定結果の信頼性は低いです。")
-            else:
-                note += ("\n※警告【中】: 企業価値の75〜90%が継続価値で占められています（ターミナル頼みのDCF）。"
-                         "永久成長率・WACCの前提を慎重に確認してください。")
-
-        # ===== 感応度分析テーブル（WACC × 永久成長率 の 3×5 マトリックス） =====
-        # 補正済みの projected_fcfs と scale_factor を使用して各セルの理論株価を計算する
-        _wacc_deltas = [-0.01, -0.005, 0.0, +0.005, +0.01]
-        _g_deltas    = [+0.005, 0.0, -0.005]
-        _net_debt_corrected = p.net_debt * scale_factor
-
-        _sens_rows = []
-        for _gd in _g_deltas:
-            _row = []
-            for _wd in _wacc_deltas:
-                _w = wacc + _wd
-                _g = p.terminal_growth_rate + _gd
-                if _w <= _g:
-                    _w = _g + 0.001  # ゼロ除算回避
-                _pv_fcfs_s = sum(f / (1 + _w) ** t for t, f in enumerate(projected_fcfs, 1))
-                _tv_s = projected_fcfs[-1] * (1 + _g) / (_w - _g)
-                _pv_tv_s = _tv_s / (1 + _w) ** p.projection_years
-                _ev_s = _pv_fcfs_s + _pv_tv_s
-                _eq_s = _ev_s - _net_debt_corrected
-                _price_s = _eq_s / p.shares_outstanding if p.shares_outstanding else 0
-                _row.append(f"{round(_price_s):,}円" if _price_s > 0 else "N/A")
-            _sens_rows.append(_row)
-
-        # Markdown テーブル生成（ヘッダーは実際の % 値）
-        _wacc_hdrs = [f"WACC {(wacc + d) * 100:.2f}%" for d in _wacc_deltas]
-        _g_labels  = [f"g={(p.terminal_growth_rate + d) * 100:.2f}%" for d in _g_deltas]
-        _tbl_header = "| g＼WACC | " + " | ".join(_wacc_hdrs) + " |"
-        _tbl_sep    = "|" + "---|" * (len(_wacc_deltas) + 1)
-        _tbl_rows   = [f"| {_g_labels[i]} | " + " | ".join(_sens_rows[i]) + " |"
-                       for i in range(len(_g_deltas))]
-        sensitivity_md = "\n".join([_tbl_header, _tbl_sep] + _tbl_rows)
-
-        # 予測FCFテーブル（LLMによる桁誤読を防ぐため事前にMarkdown化）
-        _fcf_tbl_rows = [
-            f"| {t}年目 | {round(f):,} | {_format_jpy(f)} |"
-            for t, f in enumerate(projected_fcfs, 1)
-        ]
-        projected_fcf_table_md = (
-            "| 年度 | 予測FCF（円） | 金額 |\n"
-            "|------|--------------|------|\n"
-            + "\n".join(_fcf_tbl_rows)
-        )
-
-        res = {
-            "method": "DCF法",
-            "growth_rate_used": round(growth_rate, 4),
-            "wacc": round(wacc, 4),
-            "projected_fcfs": [round(f) for f in projected_fcfs],
-            "projected_fcf_labels": [_format_jpy(f) for f in projected_fcfs],
-            "projected_fcf_table_markdown": projected_fcf_table_md,
-            # --- 事業価値（予測期間FCFの現在価値合計）---
-            "pv_fcfs": round(pv_fcfs),
-            "pv_fcfs_label": _format_jpy(pv_fcfs),
-            # --- 継続価値 ---
-            # ⚠️ terminal_value_undiscounted は「参考値（未割引）」。EV計算には使用しない。
-            # ⚠️ レポートに記載する際は必ず pv_terminal_value（割引済み）を使用すること。
-            "terminal_value_undiscounted": round(tv),        # 未割引TV（参考値・EV計算に不使用）
-            "pv_terminal_value": round(pv_tv),               # 割引済みTV（EV計算に使用）
-            "pv_terminal_value_label": _format_jpy(pv_tv),  # 割引済みTVの日本語表記
-            "tv_ratio": round(tv_ratio, 4),
-            # --- 企業価値 = 事業価値(pv_fcfs) + 継続価値PV(pv_terminal_value) ---
-            "enterprise_value": round(enterprise_value),
-            "enterprise_value_label": _format_jpy(enterprise_value),
-            # LLMの加算ミスを防ぐための検証用文字列
-            "ev_composition": (
-                f"EV = 事業価値{_format_jpy(pv_fcfs)} + 継続価値PV{_format_jpy(pv_tv)}"
-                f" = {_format_jpy(enterprise_value)}"
-            ),
-            "equity_value": round(equity_value),
-            "equity_value_label": _format_jpy(equity_value),
-            "intrinsic_price_per_share": round(intrinsic_price, 2) if intrinsic_price else None,
-            # --- 感応度分析テーブル ---
-            "sensitivity_table_markdown": sensitivity_md,
-            "sensitivity_wacc_base": round(wacc, 4),
-            "sensitivity_g_base": round(p.terminal_growth_rate, 4),
-        }
-        if segment_cagr_note:
-            res["segment_cagr_note"] = segment_cagr_note
-        if margin_drift_note:
-            res["margin_drift_note"] = margin_drift_note
-        if _fcf_scale_warning:
-            res["fcf_scale_warning"] = _fcf_scale_warning
-        if note:
-            res["note"] = note
-        return res
 
 
 class MultiplesValuationTool(BaseTool):
@@ -432,6 +144,231 @@ class MultiplesValuationTool(BaseTool):
             }
 
         return result
+
+
+# ===== 逆DCF法（Exit Multiple方式）=====
+
+class ReverseDCFInput(BaseModel):
+    current_ev: float               # 現在のEV（時価総額 + 純有利子負債, 円単位）
+    ebitda_0: float                 # 現在のEBITDA（円単位, 最新決算ベース）
+    exit_multiple: float            # TerminalのEV/EBITDAマルチプル（例: 8.0）
+    projection_years: int = 5       # 予測年数（デフォルト5年）
+    shares_outstanding: float = 0.0 # 発行済株式数（シナリオテーブルの株価換算用）
+    net_debt: float = 0.0           # 純有利子負債（シナリオテーブルの株価換算用, 円単位）
+    # WACC: 直接指定 or CAPMコンポーネントから自動計算
+    wacc: float = 0.0               # 0なら以下のCAPMコンポーネントから自動計算
+    risk_free_rate: float = DCF_DEFAULTS["risk_free_rate"]
+    equity_risk_premium: float = DCF_DEFAULTS["equity_risk_premium"]
+    beta: float = DCF_DEFAULTS["beta"]
+    debt_cost: float = DCF_DEFAULTS["debt_cost"]
+    debt_ratio: float = DCF_DEFAULTS["debt_ratio"]
+    tax_rate: float = DCF_DEFAULTS["tax_rate"]
+    # 比較用の期待成長率（Agent4の歴史的CAGRなど）
+    expected_growth_rate: float = 0.0  # 0なら比較コメントなし
+
+
+class ReverseDCFTool(BaseTool):
+    """
+    逆DCF法（Exit Multiple方式）で市場が現在価格に織り込む成長率を逆算する。
+
+    EV = Σ[EBITDA_0*(1+g)^t / (1+r)^t] + [EBITDA_0*(1+g)^N * Multiple / (1+r)^N]
+    上式を満たす g を二分法で求め、「市場が織り込む成長前提」として可視化する。
+    """
+    name: str = "ReverseDCFTool"
+    description: str = (
+        "逆DCF法（Exit Multiple方式）で市場が織り込むEBITDA成長率を逆算する。\n"
+        "current_ev: 現在のEV（時価総額+純有利子負債, 円単位）\n"
+        "ebitda_0: 現在のEBITDA（円単位）\n"
+        "exit_multiple: Terminal EV/EBITDAマルチプル（例: 業界平均の8.0）\n"
+        "wacc: WACCを直接指定（0なら risk_free_rate+beta+equity_risk_premium で自動計算）\n"
+        "expected_growth_rate: 比較用の期待成長率（Agent4のCAGR等, 0なら省略）\n"
+        "shares_outstanding・net_debt: シナリオテーブルの株価換算用（省略可）\n"
+        "⚠️ 金額パラメータ（current_ev, ebitda_0, net_debt）はすべて【実際の円単位】で入力すること。"
+    )
+    args_schema: type[BaseModel] = ReverseDCFInput
+
+    def _run(self, **kwargs) -> dict:
+        try:
+            p = ReverseDCFInput(**kwargs)
+        except Exception as e:
+            return {"error": f"入力パラメータエラー: {e}"}
+
+        if p.current_ev <= 0:
+            return {"error": "current_ev が0以下です"}
+        if p.ebitda_0 <= 0:
+            return {"error": "ebitda_0 が0以下です（EBITDAが負または0の企業には逆DCFは適用できません）"}
+        if p.exit_multiple <= 0:
+            return {"error": "exit_multiple が0以下です"}
+
+        # WACC 決定
+        if p.wacc > 0:
+            wacc = p.wacc
+            wacc_note = f"WACC={wacc:.2%}（直接指定）"
+        else:
+            re_val = p.risk_free_rate + p.beta * p.equity_risk_premium
+            wacc = (1 - p.debt_ratio) * re_val + p.debt_ratio * p.debt_cost * (1 - p.tax_rate)
+            wacc_note = (
+                f"WACC={wacc:.2%}（CAPM自動計算: Rf={p.risk_free_rate:.2%}, "
+                f"ERP={p.equity_risk_premium:.2%}, β={p.beta}, "
+                f"Rd={p.debt_cost:.2%}, D/A={p.debt_ratio:.0%}）"
+            )
+
+        N = p.projection_years
+        M = p.exit_multiple
+
+        # 単位補正チェック
+        scale_note = ""
+        current_ev = p.current_ev
+        ebitda_0 = p.ebitda_0
+        net_debt = p.net_debt
+
+        if ebitda_0 > 0 and current_ev / ebitda_0 < 1.0:
+            logger.warning("current_ev/ebitda_0 < 1.0: 百万円単位入力の疑いがあるため1,000,000倍に自動補正します")
+            current_ev *= 1_000_000
+            ebitda_0 *= 1_000_000
+            net_debt *= 1_000_000
+            scale_note = "※入力が百万円単位と判定し1,000,000倍に自動補正しました。"
+
+        def _calc_ev(g: float, _e=None, _w=None, _N=None, _M=None) -> float:
+            e = _e if _e is not None else ebitda_0
+            w = _w if _w is not None else wacc
+            n = _N if _N is not None else N
+            m = _M if _M is not None else M
+            ebitdas = [e * (1 + g) ** t for t in range(1, n + 1)]
+            pv_ebitda = sum(ev / (1 + w) ** t for t, ev in enumerate(ebitdas, 1))
+            tv = ebitdas[-1] * m
+            pv_tv = tv / (1 + w) ** n
+            return pv_ebitda + pv_tv
+
+        # ---- 二分法（Bisection）で implied_g を求める ----
+        g_lo, g_hi = -0.50, 1.00
+        ev_lo = _calc_ev(g_lo)
+        ev_hi = _calc_ev(g_hi)
+
+        implied_g = None
+        if ev_lo <= current_ev <= ev_hi:
+            for _ in range(200):
+                g_mid = (g_lo + g_hi) / 2
+                ev_mid = _calc_ev(g_mid)
+                if abs(ev_mid - current_ev) / current_ev < 1e-8:
+                    implied_g = g_mid
+                    break
+                if ev_mid < current_ev:
+                    g_lo = g_mid
+                else:
+                    g_hi = g_mid
+            if implied_g is None:
+                implied_g = (g_lo + g_hi) / 2
+
+        if implied_g is None:
+            return {
+                "error": (
+                    "implied_g の探索範囲（-50%〜+100%）内で収束しませんでした。"
+                    f"（EV={_format_jpy(current_ev)}, EBITDA={_format_jpy(ebitda_0)}, "
+                    f"EV/EBITDA_0={current_ev/ebitda_0:.1f}x）"
+                )
+            }
+
+        # ---- シナリオテーブル（各成長率での implied EV・株価）----
+        scenario_gs = [-0.05, 0.0, 0.02, 0.05, 0.08, 0.10, 0.15, 0.20]
+        tol = 0.005
+        if not any(abs(implied_g - g) < tol for g in scenario_gs):
+            scenario_gs.append(implied_g)
+        scenario_gs.sort()
+
+        scenario_rows = []
+        for g in scenario_gs:
+            ev_g = _calc_ev(g)
+            eq_g = ev_g - net_debt
+            price_g = (eq_g / p.shares_outstanding) if p.shares_outstanding > 0 else None
+            is_implied = abs(g - implied_g) < tol
+            marker = " ◀ 市場織込" if is_implied else ""
+            price_str = (f"{round(price_g):,}円" if price_g is not None else "—")
+            scenario_rows.append(
+                f"| {g*100:+.1f}% | {_format_jpy(ev_g)} | {price_str}{marker} |"
+            )
+
+        price_col = "株価（目安）" if p.shares_outstanding > 0 else "株価（—）"
+        scenario_md = (
+            f"| EBITDA成長率(g) | implied EV | {price_col} |\n"
+            f"|---|---|---|\n"
+            + "\n".join(scenario_rows)
+        )
+
+        # ---- 感応度テーブル（WACC × ExitMultiple → implied_g）----
+        wacc_deltas = [-0.01, -0.005, 0.0, +0.005, +0.01]
+        exit_multiples = [6.0, 8.0, 10.0, 12.0]
+
+        sens_rows = []
+        wacc_hdrs = [f"WACC {(wacc + d)*100:.2f}%" for d in wacc_deltas]
+        for mult in exit_multiples:
+            row_cells = []
+            for wd in wacc_deltas:
+                w = wacc + wd
+                if w <= 0:
+                    row_cells.append("N/A")
+                    continue
+                gl, gh = -0.50, 1.00
+                evl, evh = _calc_ev(gl, _w=w, _M=mult), _calc_ev(gh, _w=w, _M=mult)
+                if not (evl <= current_ev <= evh):
+                    row_cells.append("範囲外")
+                    continue
+                for _ in range(150):
+                    gm = (gl + gh) / 2
+                    evm = _calc_ev(gm, _w=w, _M=mult)
+                    if abs(evm - current_ev) / current_ev < 1e-7:
+                        break
+                    if evm < current_ev:
+                        gl = gm
+                    else:
+                        gh = gm
+                row_cells.append(f"{((gl + gh) / 2)*100:+.1f}%")
+            sens_rows.append(f"| {mult:.0f}x | " + " | ".join(row_cells) + " |")
+
+        sens_md = (
+            "| ExitMultiple＼WACC | " + " | ".join(wacc_hdrs) + " |\n"
+            "|---|" + "---|" * len(wacc_deltas) + "\n"
+            + "\n".join(sens_rows)
+        )
+
+        # ---- 解釈コメント ----
+        interpretation_lines = [
+            f"現在EVは {_format_jpy(current_ev)}。",
+            f"市場が織り込むEBITDA成長率（implied g）= **{implied_g*100:+.2f}%/年**（{N}年間, ExitMultiple={M:.1f}x）。",
+        ]
+        if p.expected_growth_rate != 0.0:
+            diff = implied_g - p.expected_growth_rate
+            if diff > 0.02:
+                verdict = "市場は期待成長率を上回る成長を織り込んでいる → **割高示唆**"
+            elif diff < -0.02:
+                verdict = "市場は期待成長率を下回る成長しか織り込んでいない → **割安示唆**"
+            else:
+                verdict = "市場の織り込み成長率は期待成長率とほぼ一致 → **概ね適正**"
+            interpretation_lines.append(
+                f"期待成長率（比較値）= {p.expected_growth_rate*100:+.1f}%/年 → "
+                f"乖離 = {diff*100:+.1f}pt → {verdict}"
+            )
+
+        result_rdcf = {
+            "method": "逆DCF法（Exit Multiple方式）",
+            "wacc_note": wacc_note,
+            "wacc": round(wacc, 4),
+            "exit_multiple": M,
+            "projection_years": N,
+            "current_ev": round(current_ev),
+            "current_ev_label": _format_jpy(current_ev),
+            "ebitda_0": round(ebitda_0),
+            "ebitda_0_label": _format_jpy(ebitda_0),
+            "current_ev_ebitda_ratio": round(current_ev / ebitda_0, 1),
+            "implied_growth_rate": round(implied_g, 4),
+            "implied_growth_rate_pct": f"{implied_g*100:+.2f}%",
+            "scenario_table_markdown": scenario_md,
+            "sensitivity_table_markdown": sens_md,
+            "interpretation": " / ".join(interpretation_lines),
+        }
+        if scale_note:
+            result_rdcf["scale_note"] = scale_note
+        return result_rdcf
 
 
 # ===== SOTP（Sum-of-the-Parts）法 =====
@@ -551,11 +488,11 @@ class SOTPValuationTool(BaseTool):
 
 class ValuationComparisonInput(BaseModel):
     current_price: float               # 現在株価（円）
-    dcf_intrinsic_price: float         # DCF法による理論株価（円）
+    dcf_intrinsic_price: float = 0.0   # DCF法による理論株価（円）。0なら省略（逆DCF移行後は不要）
     multiples_per_price: float = 0.0   # マルチプル法（PER）による理論株価（円）
     multiples_ev_ebitda_price: float = 0.0  # マルチプル法（EV/EBITDA）による理論株価（円）
     roic: float = 0.0       # FinancialCalcToolのROIC出力（小数, 例: 0.035）。0なら評価スキップ
-    base_wacc: float = 0.0  # DCFValuationToolのwacc出力（小数, 例: 0.059）。0なら評価スキップ
+    base_wacc: float = 0.0  # WACCの値（小数, 例: 0.059）。0なら評価スキップ
 
 
 class ValuationComparisonTool(BaseTool):
@@ -605,10 +542,11 @@ class ValuationComparisonTool(BaseTool):
                 "summary": summary,
             }
 
-        result = {
-            "method": "ValuationComparison",
-            "dcf": _calc(p.dcf_intrinsic_price),
-        }
+        result: dict = {"method": "ValuationComparison"}
+
+        # DCF法（任意 - 逆DCF移行後は省略可）
+        if p.dcf_intrinsic_price > 0:
+            result["dcf"] = _calc(p.dcf_intrinsic_price)
 
         # PER法（任意）
         if p.multiples_per_price > 0:
@@ -619,7 +557,9 @@ class ValuationComparisonTool(BaseTool):
             result["multiples_ev_ebitda"] = _calc(p.multiples_ev_ebitda_price)
 
         # 平均理論株価と総合判定
-        prices = [p.dcf_intrinsic_price]
+        prices = []
+        if p.dcf_intrinsic_price > 0:
+            prices.append(p.dcf_intrinsic_price)
         if p.multiples_per_price > 0:
             prices.append(p.multiples_per_price)
         if p.multiples_ev_ebitda_price > 0:

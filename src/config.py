@@ -72,6 +72,11 @@ def get_chatgpt_llm() -> LLM:
         max_tokens=4096,
     )
 
+# ===== デバッグ設定 =====
+# DEBUG_MODE=true にすると、各エージェントの中間出力をリアルタイムでSlackに送信する。
+# .env または環境変数で切り替え可能。
+DEBUG_MODE: bool = os.environ.get("DEBUG_MODE", "false").lower() == "true"
+
 # ===== 共通定数 =====
 DATA_DIR = "data"
 EDINET_CODE_LIST_CSV = os.path.join(DATA_DIR, "edinet_code_list.csv")

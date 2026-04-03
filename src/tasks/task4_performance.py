@@ -50,7 +50,7 @@ def create_task4(ticker: str, edinet_code: str) -> Task:
             "  c) 過去CAGRと将来見通しを対比テーブルで示し、DCFに推奨するCAGR（どちらを使うべきか）にコメントを付けること\n"
             "  d) セグメントミックス変化が営業利益率に与える影響方向（改善/悪化/横ばい）とその規模感を示すこと\n"
             "     → 例: 低利益の自動車セグメントが縮小し高利益の半導体セグメントが拡大 → 利益率改善方向\n"
-            "     → これがAgent6がDCFValuationToolのmargin_driftパラメータを設定する際の根拠となる\n"
+            "     → これがAgent6が逆DCFのexpected_growth_rateおよびebitda_0を設定する際の根拠となる\n"
             "  ※ 将来見通しが取得できない場合は過去CAGRを使用し「過去CAGR適用」と明記すること\n\n"
             "【分析方法】\n"
             "各指標の時系列リストをTrendAnalysisToolに渡してCAGR・トレンド方向・直近変化率を計算すること。\n"

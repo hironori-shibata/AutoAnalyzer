@@ -15,11 +15,12 @@ def create_agent3a() -> Agent:
     return Agent(
         role="競合データ収集エージェント",
         goal=(
-            "対象企業の主要競合他社（5〜7社）を特定し、"
-            "KabutanBatchToolで各社(対象企業も含めること)のPER・PBR・時価総額・配当利回りを、"
+            "対象企業のセグメント数Nを確認し、N=1なら5〜7社・N=2なら6〜8社・N≥3ならN×3社を目標に競合他社を特定すること。"
+            "KabutanBatchToolで各社のPER・PBR・時価総額・配当利回りを、"
             "TradingViewEVEBITDAToolでEV/EBITDA倍率を一括収集すること。"
             "競合銘柄コードが不足する場合は、KabutanThemeListTool と KabutanThemeStocksTool を使って"
             "株探のテーマページから同業銘柄を自力で補完すること。"
+            "N≥2の場合は各セグメントに最低3社を割り当ててセグメント別PERテーブルを作成すること。"
         ),
         backstory=(
             "あなたは定量データ収集のスペシャリストです。"

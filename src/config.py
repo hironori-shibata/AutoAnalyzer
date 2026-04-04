@@ -17,6 +17,7 @@ def get_llm() -> LLM:
         base_url="https://api.deepseek.com",
         temperature=0.2,
         timeout=400,
+        max_tokens=8192,
     )
 
 def get_llm_long_output() -> LLM:

@@ -2,6 +2,7 @@
 財務指標計算ツール・トレンド分析ツール
 LLMに数値計算をさせず、すべてPythonで計算する（設計書の最重要ルール）。
 """
+import json
 import numpy as np
 from crewai.tools import BaseTool
 from pydantic import BaseModel
@@ -185,3 +186,88 @@ class TrendAnalysisTool(BaseTool):
             "data_points": len(values),
             "years": years,
         }
+
+
+# ===== IRBankTrendBatchTool =====
+
+def _trend_stats(values: list, years: list) -> dict:
+    """TrendAnalysisToolと同ロジックの内部ヘルパー。Noneを除去してCAGR・トレンドを返す。"""
+    filtered = [(v, y) for v, y in zip(values, years) if v is not None]
+    if len(filtered) < 2:
+        return {"error": "有効データ2件未満"}
+    vals = [v for v, _ in filtered]
+    yrs = [y for _, y in filtered]
+    n = len(vals) - 1
+    cagr = None
+    if vals[0] > 0 and vals[-1] > 0:
+        cagr = round(((vals[-1] / vals[0]) ** (1 / n)) - 1, 4)
+    slope = float(np.polyfit(np.arange(len(vals)), vals, 1)[0])
+    recent_3yr = None
+    if len(vals) >= 4 and vals[-4] != 0:
+        recent_3yr = round((vals[-1] - vals[-4]) / abs(vals[-4]), 4)
+    return {
+        "latest": vals[-1],
+        "oldest": vals[0],
+        "cagr": cagr,
+        "trend": "改善" if slope > 0 else ("悪化" if slope < 0 else "横ばい"),
+        "recent_3yr_change_rate": recent_3yr,
+        "years": yrs,
+        "data_points": len(vals),
+    }
+
+
+# 各セクションから抽出する指標定義
+_BATCH_METRICS = {
+    "pl": ["revenue", "operating_profit", "net_income", "eps", "roe", "roa", "operating_margin"],
+    "bs": ["equity_ratio"],
+    "cf": ["operating_cf", "investing_cf", "free_cf"],
+    "dividend": ["dividend_per_share", "payout_ratio"],
+}
+
+
+class IRBankTrendBatchInput(BaseModel):
+    financial_json: str  # IRBankFinancialTableToolが返すJSON文字列
+
+
+class IRBankTrendBatchTool(BaseTool):
+    """
+    IRBankFinancialTableToolが返すJSONを受け取り、
+    全主要指標（売上・利益・ROE/ROA・CF・配当等）のトレンド分析を一括実行する。
+
+    個別にTrendAnalysisToolを14回呼ぶ代わりに、このツールを1回呼ぶこと。
+    返却値: 指標名 → {cagr, trend, recent_3yr_change_rate, latest, oldest, years} の辞書。
+    セグメントデータはこのツールでは計算できないため、引き続きTrendAnalysisToolを使用すること。
+    """
+    name: str = "IRBankTrendBatchTool"
+    description: str = (
+        "IRBankFinancialTableToolが返したJSON文字列を受け取り、"
+        "売上・営業利益・純利益・EPS・ROE・ROA・営業利益率・自己資本比率・"
+        "営業CF・投資CF・FCF・一株配当・配当性向の全トレンドをPythonで一括計算する。"
+        "個別にTrendAnalysisToolを複数回呼ぶ代わりにこのツールを1回呼ぶこと。"
+        "financial_json: IRBankFinancialTableToolの出力文字列をそのまま渡すこと。"
+    )
+    args_schema: type[BaseModel] = IRBankTrendBatchInput
+
+    def _run(self, financial_json: str) -> str:
+        try:
+            data = json.loads(financial_json)
+        except Exception as e:
+            return json.dumps({"error": f"JSONパース失敗: {e}"}, ensure_ascii=False)
+
+        results: dict = {}
+        for section, fields in _BATCH_METRICS.items():
+            rows = data.get(section, [])
+            if not rows:
+                continue
+            # 年度文字列を整数に変換（先頭4文字を使用）
+            years = []
+            for r in rows:
+                try:
+                    years.append(int(str(r.get("year", "0"))[:4]))
+                except ValueError:
+                    years.append(0)
+            for field in fields:
+                values = [r.get(field) for r in rows]
+                results[field] = _trend_stats(values, years)
+
+        return json.dumps(results, ensure_ascii=False, indent=2)

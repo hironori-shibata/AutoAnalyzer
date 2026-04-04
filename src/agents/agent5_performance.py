@@ -7,7 +7,7 @@ LLMには数値計算をさせない。
 from crewai import Agent
 from src.config import get_llm
 from src.tools.irbank_scraper import IRBankScraperTool, IRBankFinancialTableTool
-from src.tools.financial_calc import TrendAnalysisTool
+from src.tools.financial_calc import TrendAnalysisTool, IRBankTrendBatchTool
 
 
 def create_agent5() -> Agent:
@@ -16,14 +16,15 @@ def create_agent5() -> Agent:
         goal=(
             "複数年にわたる業績データを収集し、時系列トレンドを分析すること。"
             "単一時点の数値ではなく、変化の方向性と持続性を重視すること。"
-            "数値計算（CAGR・変化率・トレンド方向）はPython Toolに委ねること。"
+            "財務テーブル全指標のトレンド計算はIRBankTrendBatchToolを1回呼ぶこと。"
+            "セグメントデータのトレンドのみTrendAnalysisToolを使用すること。"
         ),
         backstory=(
             "あなたは長期投資家の視点から企業の業績推移を分析する専門家です。"
             "5〜10年の時系列データから企業の実力と成長軌道を読み解きます。"
         ),
-        tools=[IRBankFinancialTableTool(), IRBankScraperTool(), TrendAnalysisTool()],
+        tools=[IRBankFinancialTableTool(), IRBankTrendBatchTool(), IRBankScraperTool(), TrendAnalysisTool()],
         llm=get_llm(),
         verbose=True,
-        max_iter=25,
+        max_iter=20,
     )

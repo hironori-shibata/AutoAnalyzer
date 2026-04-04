@@ -59,7 +59,12 @@ def _parse_jp_value(s) -> float | None:
 
 
 def _parse_table(df: pd.DataFrame, col_map: dict, confirmed_only: bool) -> list[dict]:
-    """DataFrameを col_map に従って変換し、確定実績行のリストを返す。"""
+    """DataFrameを col_map に従って変換し、確定実績行のリストを返す。
+
+    col_map の複数キーが同じ dst_key を持つ場合（エイリアス）、
+    先に非Noneの値が見つかれば後続のNoneで上書きしない。
+    これにより '売上' と '収益' のように企業によって異なるカラム名に対応できる。
+    """
     rows = []
     for _, row in df.iterrows():
         year = str(row.get('年度', '')).strip()
@@ -71,7 +76,10 @@ def _parse_table(df: pd.DataFrame, col_map: dict, confirmed_only: bool) -> list[
             continue
         record = {'year': year}
         for src_col, dst_key in col_map.items():
-            record[dst_key] = _parse_jp_value(row.get(src_col))
+            val = _parse_jp_value(row.get(src_col))
+            # すでに非Noneの値がセットされていればNoneで上書きしない（エイリアス対応）
+            if record.get(dst_key) is None:
+                record[dst_key] = val
         rows.append(record)
     return rows
 
@@ -125,24 +133,27 @@ class IRBankScraperTool(BaseTool):
 # ===== IRBankFinancialTableTool =====
 
 _PL_COLS = {
-    '売上':   'revenue',
-    '営利':   'operating_profit',
-    '経常':   'ordinary_profit',
+    '売上':    'revenue',
+    '収益':    'revenue',          # サービス業・持株会社系（電通等）はこちら
+    '営利':    'operating_profit',
+    '経常':    'ordinary_profit',
     '当期利益': 'net_income',
-    '包括':   'comprehensive_income',
-    'EPS':    'eps',
-    'ROE':    'roe',
-    'ROA':    'roa',
-    '営利率':  'operating_margin',
-    '原価率':  'cogs_ratio',
-    '販管費率': 'sga_ratio',
+    '純利':    'net_income',     # トヨタ等はこちら
+    '包括':    'comprehensive_income',
+    'EPS':     'eps',
+    'ROE':     'roe',
+    'ROA':     'roa',
+    '営利率':   'operating_margin',
+    '原価率':   'cogs_ratio',
+    '販管費率':  'sga_ratio',
 }
 
 _BS_COLS = {
     '総資産':     'total_assets',
     '純資産':     'net_assets',
     '株主資本':   'shareholders_equity',
-    '自己資本比率': 'equity_ratio',
+    '自己資本比率':  'equity_ratio',
+    '株主資本比率':  'equity_ratio',  # 電通等の表記ゆれに対応
     '利益剰余金':  'retained_earnings',
     '有利子負債':  'interest_bearing_debt',
     '有利子負債比率': 'debt_ratio',

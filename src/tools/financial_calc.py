@@ -226,40 +226,54 @@ _BATCH_METRICS = {
 
 
 class IRBankTrendBatchInput(BaseModel):
-    financial_json: str  # IRBankFinancialTableToolが返すJSON文字列
+    edinet_code: str  # EdinetCode（E0XXXXX形式）
 
 
 class IRBankTrendBatchTool(BaseTool):
     """
-    IRBankFinancialTableToolが返すJSONを受け取り、
+    EdinetCodeを受け取り、IR Bankから財務データを内部取得したうえで
     全主要指標（売上・利益・ROE/ROA・CF・配当等）のトレンド分析を一括実行する。
 
-    個別にTrendAnalysisToolを14回呼ぶ代わりに、このツールを1回呼ぶこと。
-    返却値: 指標名 → {cagr, trend, recent_3yr_change_rate, latest, oldest, years} の辞書。
-    セグメントデータはこのツールでは計算できないため、引き続きTrendAnalysisToolを使用すること。
+    IRBankFinancialTableTool の呼び出しとトレンド計算を1回のツール呼び出しで完結させる。
+    LLMが大きなJSONを引数として渡す必要がないため、長期間データでも正確に動作する。
+
+    返却値:
+      raw    : IRBankFinancialTableToolと同等の生データ（pl/bs/cf/dividend）。推移テーブル表示に使用。
+      trends : 指標名 → {cagr, trend, recent_3yr_change_rate, latest, oldest, years}。
+
+    セグメントデータはこのツールでは取得できないため、
+    IRBankScraperTool(section='segment') + TrendAnalysisTool を使用すること。
     """
     name: str = "IRBankTrendBatchTool"
     description: str = (
-        "IRBankFinancialTableToolが返したJSON文字列を受け取り、"
+        "EdinetCodeを指定するだけで、IR Bankから財務データを取得し、"
         "売上・営業利益・純利益・EPS・ROE・ROA・営業利益率・自己資本比率・"
-        "営業CF・投資CF・FCF・一株配当・配当性向の全トレンドをPythonで一括計算する。"
-        "個別にTrendAnalysisToolを複数回呼ぶ代わりにこのツールを1回呼ぶこと。"
-        "financial_json: IRBankFinancialTableToolの出力文字列をそのまま渡すこと。"
+        "営業CF・投資CF・FCF・一株配当・配当性向の全トレンドをPythonで一括計算して返す。"
+        "返却値の raw セクションに生データ（推移テーブル表示用）、"
+        "trends セクションに各指標のCAGR・トレンド方向・直近変化率が含まれる。"
+        "IRBankFinancialTableTool を事前に呼ぶ必要はない。"
+        "edinet_code: EdinetCode（E0XXXXX形式）を指定すること。"
     )
     args_schema: type[BaseModel] = IRBankTrendBatchInput
 
-    def _run(self, financial_json: str) -> str:
-        try:
-            data = json.loads(financial_json)
-        except Exception as e:
-            return json.dumps({"error": f"JSONパース失敗: {e}"}, ensure_ascii=False)
+    def _run(self, edinet_code: str) -> str:
+        # 内部でIRBankFinancialTableToolを呼び出す（LLMに大きなJSONを渡させない）
+        from src.tools.irbank_scraper import IRBankFinancialTableTool
+        raw_json = IRBankFinancialTableTool()._run(edinet_code=edinet_code)
 
-        results: dict = {}
+        try:
+            data = json.loads(raw_json)
+        except Exception as e:
+            return json.dumps({"error": f"IRBankデータ取得・パース失敗: {e}"}, ensure_ascii=False)
+
+        if "error" in data:
+            return json.dumps(data, ensure_ascii=False)
+
+        trends: dict = {}
         for section, fields in _BATCH_METRICS.items():
             rows = data.get(section, [])
             if not rows:
                 continue
-            # 年度文字列を整数に変換（先頭4文字を使用）
             years = []
             for r in rows:
                 try:
@@ -268,6 +282,6 @@ class IRBankTrendBatchTool(BaseTool):
                     years.append(0)
             for field in fields:
                 values = [r.get(field) for r in rows]
-                results[field] = _trend_stats(values, years)
+                trends[field] = _trend_stats(values, years)
 
-        return json.dumps(results, ensure_ascii=False, indent=2)
+        return json.dumps({"raw": data, "trends": trends}, ensure_ascii=False, indent=2)

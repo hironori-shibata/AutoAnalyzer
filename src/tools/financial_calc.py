@@ -285,3 +285,84 @@ class IRBankTrendBatchTool(BaseTool):
                 trends[field] = _trend_stats(values, years)
 
         return json.dumps({"raw": data, "trends": trends}, ensure_ascii=False, indent=2)
+
+
+# ===== SegmentTrendBatchTool =====
+
+class SegmentTrendBatchInput(BaseModel):
+    segment_names: list[str]    # セグメント名リスト（例: ["日本", "EMEA", "Americas", "APAC"]）
+    segment_values: list[list]  # 各セグメントの数値リスト（古い順・Noneを含んでよい）
+    years: list[int]            # 共通年度リスト（segment_valuesの各リストと対応）
+
+
+class SegmentTrendBatchTool(BaseTool):
+    """
+    複数セグメントのCAGR・トレンド方向・直近変化率・最新年度構成比を一括計算する。
+
+    TrendAnalysisTool をセグメント数だけ個別に呼び出す代わりに、
+    このツールを1回呼ぶだけで全セグメントのトレンドと構成比を取得できる。
+
+    返却値（JSON）:
+      {
+        "日本": { "cagr": 0.045, "trend": "改善", "recent_3yr_change_rate": 0.14,
+                  "latest": 6083.0, "oldest": 5327.0, "years": [...],
+                  "latest_weight": 0.41 },   ← 最新年度の売上構成比（全セグメント合計=1）
+        "EMEA": { ... },
+        ...
+      }
+
+    segment_names と segment_values は同じ順・同じ長さで渡すこと。
+    years は全セグメント共通の年度リスト（古い順）。
+    値が存在しない年は None を渡すと自動除去する。
+    """
+    name: str = "SegmentTrendBatchTool"
+    description: str = (
+        "複数セグメントのCAGR・トレンド方向・直近変化率・最新年度構成比を1回の呼び出しで一括計算する。"
+        "segment_names: セグメント名リスト, "
+        "segment_values: 各セグメントの数値リスト（古い順, Noneを含んでよい）, "
+        "years: 共通年度リスト（int）。"
+        "TrendAnalysisTool をセグメント数だけ個別に呼ぶ代わりにこのToolを使うこと。"
+        "返却値に latest_weight（最新年度の売上構成比）が含まれるため、"
+        "後続エージェントがセグメント別加重平均CAGRを直接計算できる。"
+    )
+    args_schema: type[BaseModel] = SegmentTrendBatchInput
+
+    def _run(self, segment_names: list, segment_values: list, years: list) -> str:
+        if len(segment_names) != len(segment_values):
+            return json.dumps(
+                {"error": "segment_names と segment_values の長さが一致しません"},
+                ensure_ascii=False,
+            )
+
+        results: dict = {}
+        latest_vals: dict = {}
+
+        for name, vals in zip(segment_names, segment_values):
+            stats = _trend_stats(vals, years)
+            results[name] = stats
+            if "latest" in stats and stats["latest"] is not None:
+                latest_vals[name] = stats["latest"]
+
+        # 最新年度の構成比を計算（全セグメントの latest 合計を 1 とする）
+        total = sum(v for v in latest_vals.values() if v and v > 0)
+        if total > 0:
+            for name in results:
+                if name in latest_vals and latest_vals[name] and latest_vals[name] > 0:
+                    results[name]["latest_weight"] = round(latest_vals[name] / total, 4)
+
+        # 加重平均CAGR（各セグメントの latest_weight × cagr の合計）
+        weighted_cagr = None
+        cagr_parts = [
+            results[name]["latest_weight"] * results[name]["cagr"]
+            for name in results
+            if results[name].get("latest_weight") is not None
+            and results[name].get("cagr") is not None
+        ]
+        if cagr_parts:
+            weighted_cagr = round(sum(cagr_parts), 4)
+
+        return json.dumps(
+            {"segments": results, "weighted_avg_cagr": weighted_cagr},
+            ensure_ascii=False,
+            indent=2,
+        )

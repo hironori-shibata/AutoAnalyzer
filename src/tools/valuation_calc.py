@@ -153,21 +153,30 @@ class MultiplesValuationTool(BaseTool):
         # PER法: セグメント加重PERが使える場合はそちらを優先、なければ補正後中央値にフォールバック
         median_per = statistics.median(working_peer_pers)
         effective_per = segment_weighted_per if segment_weighted_per is not None else median_per
-        per_price = p.target_eps * effective_per
 
         result = {
             "method": "マルチプル法（PER法＋EV/EBITDA法）",
-            "per_method": {
+        }
+
+        # EPS <= 0（赤字企業）の場合はPER法を適用不可
+        if p.target_eps <= 0:
+            result["per_method"] = {
+                "error": "target_eps が0以下のためPER法は適用不可（赤字企業）。PBR法・EV/Revenue法等の代替指標を使用すること。",
+                "target_eps": p.target_eps,
+                "effective_per_used": round(effective_per, 2),
+            }
+        else:
+            per_price = p.target_eps * effective_per
+            result["per_method"] = {
                 "raw_median_peer_per": round(statistics.median(p.peer_pers), 2),
                 "median_peer_per": round(median_per, 2),
                 "effective_per_used": round(effective_per, 2),
                 "per_implied_price": round(per_price, 2),
-            },
-        }
-        if per_size_discount_note:
-            result["per_method"]["size_discount_note"] = per_size_discount_note
-        if segment_per_note:
-            result["per_method"]["segment_weighted_per_note"] = segment_per_note
+            }
+            if per_size_discount_note:
+                result["per_method"]["size_discount_note"] = per_size_discount_note
+            if segment_per_note:
+                result["per_method"]["segment_weighted_per_note"] = segment_per_note
 
         # EV/EBITDA法（オプション）
         if p.peer_ev_ebitdas and p.target_ebitda > 0 and p.target_shares > 0:

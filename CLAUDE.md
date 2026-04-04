@@ -11,7 +11,7 @@ AutoAnalyzer is a Japanese corporate valuation analysis system triggered via Sla
 ```bash
 # Setup (Python 3.11 required)
 conda create -n autoanalyzer python=3.11
-conda activate autoanalyzer
+**conda activate autoanalyzer** #test or degug
 pip install -r requirements.txt
 cp .env.example .env  # then fill in API keys
 

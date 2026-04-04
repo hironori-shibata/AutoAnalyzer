@@ -1,9 +1,9 @@
 """
-Agent2: ライバルリサーチャー（情報収集フェーズ）
+Agent3: ライバルリサーチャー（情報収集フェーズ）
 対象企業の競合他社・業界構造を先行調査する。
 Perplexity Sonar (OpenRouter経由) を使用。ウェブ検索はモデル内蔵機能で実行する。
 
-Agent2b: 競合レポート作成エージェント
+Agent3b: 競合レポート作成エージェント
 Task2（Perplexity情報収集）とTask2a（定量データ）を統合してレポートを作成する。
 DeepSeek Reasoner (R1) を使用（段階的推論による高精度な統合分析）。
 """
@@ -12,7 +12,7 @@ from crewai import Agent
 from src.config import get_perplexity_llm, get_llm, get_reasoner_llm
 
 
-def create_agent2() -> Agent:
+def create_agent3() -> Agent:
     llm = get_perplexity_llm()
     today = date.today().strftime("%Y年%m月%d日")
     return Agent(
@@ -42,7 +42,7 @@ def create_agent2() -> Agent:
     )
 
 
-def create_agent2b() -> Agent:
+def create_agent3b() -> Agent:
     llm = get_reasoner_llm()
     today = date.today().strftime("%Y年%m月%d日")
     return Agent(

@@ -1,5 +1,5 @@
 """
-Agent_Gemini: 対象企業ディープリサーチャー
+Agent2: 対象企業ディープリサーチャー（Gemini）
 Google Gemini Flash (公式API) を使用し、Google Search Grounding で
 対象企業に関する最新情報を広範かつ深く収集する。
 
@@ -16,7 +16,7 @@ from crewai import Agent
 from src.config import get_gemini_llm
 
 
-def create_agent_gemini() -> Agent:
+def create_agent2() -> Agent:
     today = date.today().strftime("%Y年%m月%d日")
     return Agent(
         role="対象企業ディープリサーチャー（Gemini）",

@@ -10,7 +10,7 @@ from src.tools.irbank_scraper import IRBankScraperTool, IRBankFinancialTableTool
 from src.tools.financial_calc import TrendAnalysisTool
 
 
-def create_agent4() -> Agent:
+def create_agent5() -> Agent:
     return Agent(
         role="業績トレンドリサーチャー",
         goal=(

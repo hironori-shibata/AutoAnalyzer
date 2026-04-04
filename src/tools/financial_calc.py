@@ -161,17 +161,27 @@ class TrendAnalysisTool(BaseTool):
         x = np.arange(len(values))
         slope = float(np.polyfit(x, values, 1)[0])
 
-        # 直近3年変化率（ゼロ割防止、かつ基準値がマイナスの場合の正しい％算出のため abs(old) で割る）
-        recent_change = None
+        # 直近3年・5年・7年変化率（ゼロ割防止、かつ基準値がマイナスの場合の正しい％算出のため abs(old) で割る）
+        recent_3yr = None
         if len(values) >= 4 and values[-4] != 0:
-            recent_change = (values[-1] - values[-4]) / abs(values[-4])
+            recent_3yr = (values[-1] - values[-4]) / abs(values[-4])
+
+        recent_5yr = None
+        if len(values) >= 6 and values[-6] != 0:
+            recent_5yr = (values[-1] - values[-6]) / abs(values[-6])
+
+        recent_7yr = None
+        if len(values) >= 8 and values[-8] != 0:
+            recent_7yr = (values[-1] - values[-8]) / abs(values[-8])
 
         return {
             "latest_value": values[-1],
             "oldest_value": values[0],
             "cagr": round(cagr, 4) if cagr is not None else None,
             "trend": "改善" if slope > 0 else ("悪化" if slope < 0 else "横ばい"),
-            "recent_3yr_change_rate": round(recent_change, 4) if recent_change is not None else None,
+            "recent_3yr_change_rate": round(recent_3yr, 4) if recent_3yr is not None else None,
+            "recent_5yr_change_rate": round(recent_5yr, 4) if recent_5yr is not None else None,
+            "recent_7yr_change_rate": round(recent_7yr, 4) if recent_7yr is not None else None,
             "data_points": len(values),
             "years": years,
         }

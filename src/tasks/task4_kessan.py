@@ -1,14 +1,14 @@
 """
-Task3: 最新決算短信リサーチタスク
-Agent3 (最新決算短信リサーチャー) が担当する。
+Task4: 最新決算短信リサーチタスク
+Agent4 (最新決算短信リサーチャー) が担当する。
 LLMに計算させず、必ずFinancialCalcToolを使うこと。
 """
 from crewai import Task
-from src.agents.agent3_kessan import create_agent3
+from src.agents.agent4_kessan import create_agent4
 
 
-def create_task3(ticker: str) -> Task:
-    agent = create_agent3()
+def create_task4(ticker: str) -> Task:
+    agent = create_agent4()
     return Task(
         description=(
             f"証券番号 {ticker} の最新決算短信について以下を実施してください:\n"

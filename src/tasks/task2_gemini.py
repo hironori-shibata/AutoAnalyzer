@@ -1,5 +1,5 @@
 """
-Task_Gemini: 対象企業ディープリサーチタスク
+Task2: 対象企業ディープリサーチタスク（Gemini）
 Google Gemini Flash (公式API / Google Search Grounding) が担当。
 有報（Task1）で判明した企業の基本情報をベースに、
 Google検索を活用して対象企業の最新情報を深堀りする。
@@ -13,11 +13,11 @@ Google検索を活用して対象企業の最新情報を深堀りする。
 """
 from datetime import date
 from crewai import Task
-from src.agents.agent_gemini import create_agent_gemini
+from src.agents.agent2_gemini import create_agent2
 
 
-def create_task_gemini(ticker: str, task1: Task) -> Task:
-    agent = create_agent_gemini()
+def create_task2(ticker: str, task1: Task) -> Task:
+    agent = create_agent2()
     today = date.today().strftime("%Y年%m月%d日")
     return Task(
         description=(

@@ -1,6 +1,6 @@
 """
-Agent6: 統括マネージャー（ボス）
-Agent1〜5の出力をすべて集約し、企業価値算定（DCF法・マルチプル法）を行い、
+Agent7: 統括マネージャー（ボス）
+全エージェントの出力を集約し、企業価値算定（DCF法・マルチプル法）を行い、
 最終的な企業価値分析レポートを生成する。
 計算はすべてPython Toolに委ねる。
 """
@@ -11,7 +11,7 @@ from src.tools.file_reader import MarkdownReadTool
 from src.tools.kabutan_batch_tool import KabutanBatchTool
 
 
-def create_agent6() -> Agent:
+def create_agent7() -> Agent:
     return Agent(
         role="統括マネージャー・企業価値アナリスト",
         goal=(

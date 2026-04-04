@@ -1,5 +1,5 @@
 """
-Task_News: 最新業界ニュース・地政学リサーチタスク
+Task6: 最新業界ニュース・地政学リサーチタスク
 対象企業のセクターを起点に、同心円状にニュースを収集する。
 - 第1圏: 企業固有ニュース（直近12ヶ月）
 - 第2圏: 直接競合・業界動向
@@ -13,11 +13,11 @@ Task_News: 最新業界ニュース・地政学リサーチタスク
 """
 from datetime import date
 from crewai import Task
-from src.agents.agent_news import create_agent_news
+from src.agents.agent6_news import create_agent6
 
 
-def create_task_news(ticker: str, task1: Task) -> Task:
-    agent = create_agent_news()
+def create_task6(ticker: str, task1: Task) -> Task:
+    agent = create_agent6()
     today = date.today().strftime("%Y年%m月%d日")
     return Task(
         description=(
@@ -70,7 +70,7 @@ def create_task_news(ticker: str, task1: Task) -> Task:
             "- 政府の産業政策・補助金・支援策の変化\n"
             "- 通商政策（関税・FTA・輸出規制・サプライチェーン政策）\n"
             "- 環境・ESG規制（CO2規制・人権デューデリジェンス等）\n\n"
-            "【STEP 5: Agent6・Agent7・Agent8向けサマリー】\n"
+            "【STEP 5: Agent7・Agent8・Agent9向けサマリー】\n"
             "収集した情報から、後続エージェントが最も参照すべき重要ポイントを以下で整理せよ:\n"
             "a) 株価ポジティブ影響が見込まれる最新情報（上位3件・根拠付き）\n"
             "b) 株価ネガティブ影響が見込まれる最新情報（上位3件・根拠付き）\n"
@@ -93,7 +93,7 @@ def create_task_news(ticker: str, task1: Task) -> Task:
             "- STEP 2: 業界・競合動向\n"
             "- STEP 3: セクター特有のマクロ・地政学リスク（セクターに応じた深掘り）\n"
             "- STEP 4: 規制・政策・通商動向\n"
-            "- STEP 5: Agent6/7/8向けサマリー（ポジティブ3件・ネガティブ3件・見落とされがちなリスク1件）"
+            "- STEP 5: Agent7/8/9向けサマリー（ポジティブ3件・ネガティブ3件・見落とされがちなリスク1件）"
         ),
         agent=agent,
         context=[task1],

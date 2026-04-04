@@ -40,8 +40,11 @@ class MultiplesInput(BaseModel):
     segment_names: list[str] = []          # セグメント名（例: ["自動車", "半導体"]）
     segment_weights: list[float] = []      # 売上構成比（0-1）
     segment_median_pers: list[float] = []  # 各セグメント競合のPER中央値（Agent2が収集）
+    # 時価総額ディスカウント補正用（PER法）
+    peer_market_caps: list[float] = []     # 同業他社の時価総額（円単位, peer_persと同順）
+    target_market_cap: float = 0.0         # 対象企業の時価総額（円単位）
 
-    @field_validator('peer_pers', 'peer_ev_ebitdas', 'segment_weights', 'segment_median_pers', mode='before')
+    @field_validator('peer_pers', 'peer_ev_ebitdas', 'segment_weights', 'segment_median_pers', 'peer_market_caps', mode='before')
     @classmethod
     def _parse_float_list(cls, v):
         """LLMがJSON文字列またはカンマ区切り文字列で渡した場合も正しく解析する。"""
@@ -79,6 +82,9 @@ class MultiplesValuationTool(BaseTool):
         "PER法: target_eps（円/株）、peer_pers（倍リスト）を渡すこと。\n"
         "EV/EBITDA法（任意）: target_ebitda・target_net_debt・target_shares・peer_ev_ebitdas も渡すと"
         "事業構造が異なる企業比較にも対応したEV/EBITDA法の理論株価が追加計算される。\n"
+        "【時価総額ディスカウント補正（PER法）】peer_market_caps・target_market_capを同時に渡すと、\n"
+        "対象企業の時価総額の1/2未満の同業他社のPERを自動割引する（小規模ほど割引）。\n"
+        "渡さない場合は peer_pers をそのまま使用する。\n"
         "⚠️ 競合データが不足の場合は勝手に数値を仮定せず、その旨を記載すること。"
     )
     args_schema: type[BaseModel] = MultiplesInput
@@ -91,6 +97,42 @@ class MultiplesValuationTool(BaseTool):
 
         if not p.peer_pers:
             return {"error": "peer_pers が空です。PER法による算定ができません。"}
+
+        # ---- 時価総額ベースのPER割引補正 ----
+        # 対象企業の時価総額の1/2未満の同業他社はPremiumが過大になりがちなのでPERを割引する。
+        # 割引係数 = (ratio / 0.5) ^ 1  [ratio < 0.5 の場合のみ]
+        # ・ratio = 0.50 → 係数 1.00（割引なし）
+        # ・ratio = 0.25 → 係数 ≈ 0.76（24%割引）
+        # ・ratio = 0.10 → 係数 ≈ 0.50（50%割引）
+        # 対象企業より大きい（ratio >= 0.5）場合は増やさずそのまま使用する。
+        per_size_discount_note = ""
+        working_peer_pers = list(p.peer_pers)
+        if (p.peer_market_caps
+                and len(p.peer_market_caps) == len(p.peer_pers)
+                and p.target_market_cap > 0):
+            adjusted_pers = []
+            discount_detail_lines = []
+            for per, peer_cap in zip(p.peer_pers, p.peer_market_caps):
+                ratio = peer_cap / p.target_market_cap
+                if ratio >= 0.5:
+                    factor = 1.0
+                else:
+                    factor = (ratio / 0.5) ** 1
+                factor=max(factor,0.1) # 最低でも90%割引（10%の係数）までにする。極端に小さい企業がいる場合の過剰補正を防止。
+                adj = per * factor
+                adjusted_pers.append(adj)
+                disc_pct = (1 - factor) * 100
+                discount_detail_lines.append(
+                    f"  - PER {per:.1f}倍 × 補正係数{factor:.3f}"
+                    f"（時価総額比{ratio:.2%}, -{disc_pct:.0f}%割引）→ {adj:.2f}倍"
+                )
+            working_peer_pers = adjusted_pers
+            adj_median = statistics.median(adjusted_pers)
+            per_size_discount_note = (
+                f"時価総額ディスカウント補正後 PER中央値 = **{adj_median:.2f}倍**\n"
+                + "\n".join(discount_detail_lines)
+            )
+            logger.info(f"PER size-discount: raw median={statistics.median(p.peer_pers):.2f}x → adjusted median={adj_median:.2f}x")
 
         # セグメント加重PERが提供されているか確認
         # 提供時はpeer_persの全体中央値の代わりにセグメント加重PERを優先使用
@@ -108,19 +150,22 @@ class MultiplesValuationTool(BaseTool):
             segment_per_note = f"セグメント加重PER={segment_weighted_per:.2f}倍 ({', '.join(details)})"
             logger.info(f"セグメント加重PERを使用: {segment_per_note}")
 
-        # PER法: セグメント加重PERが使える場合はそちらを優先、なければ全体中央値にフォールバック
-        median_per = statistics.median(p.peer_pers)
+        # PER法: セグメント加重PERが使える場合はそちらを優先、なければ補正後中央値にフォールバック
+        median_per = statistics.median(working_peer_pers)
         effective_per = segment_weighted_per if segment_weighted_per is not None else median_per
         per_price = p.target_eps * effective_per
 
         result = {
             "method": "マルチプル法（PER法＋EV/EBITDA法）",
             "per_method": {
+                "raw_median_peer_per": round(statistics.median(p.peer_pers), 2),
                 "median_peer_per": round(median_per, 2),
                 "effective_per_used": round(effective_per, 2),
                 "per_implied_price": round(per_price, 2),
             },
         }
+        if per_size_discount_note:
+            result["per_method"]["size_discount_note"] = per_size_discount_note
         if segment_per_note:
             result["per_method"]["segment_weighted_per_note"] = segment_per_note
 
@@ -165,6 +210,26 @@ class ReverseDCFInput(BaseModel):
     tax_rate: float = DCF_DEFAULTS["tax_rate"]
     # 比較用の期待成長率（Agent4の歴史的CAGRなど）
     expected_growth_rate: float = 0.0  # 0なら比較コメントなし
+    # 時価総額ベースのExitMultiple補正用（オプション）
+    # 対象企業の1/2未満の時価総額を持つ同業他社のMultipleを自動割引する
+    peer_ev_ebitdas: list[float] = []   # 同業他社のEV/EBITDA一覧
+    peer_market_caps: list[float] = []  # 同業他社の時価総額（円単位, peer_ev_ebitdasと同順）
+    target_market_cap: float = 0.0      # 対象企業の時価総額（円単位）
+
+    @field_validator('peer_ev_ebitdas', 'peer_market_caps', mode='before')
+    @classmethod
+    def _parse_float_list(cls, v):
+        if isinstance(v, str):
+            try:
+                return [float(x) for x in _json.loads(v)]
+            except Exception:
+                try:
+                    return [float(x.strip()) for x in v.split(',') if x.strip()]
+                except Exception:
+                    return []
+        if isinstance(v, list):
+            return [float(x) for x in v if x is not None]
+        return v
 
 
 class ReverseDCFTool(BaseTool):
@@ -179,11 +244,16 @@ class ReverseDCFTool(BaseTool):
         "逆DCF法（Exit Multiple方式）で市場が織り込むEBITDA成長率を逆算する。\n"
         "current_ev: 現在のEV（時価総額+純有利子負債, 円単位）\n"
         "ebitda_0: 現在のEBITDA（円単位）\n"
-        "exit_multiple: Terminal EV/EBITDAマルチプル（例: 業界平均の8.0）\n"
+        "exit_multiple: 競合データが一切取得できない場合のフォールバック値（通常はpeer_ev_ebitdas渡しで自動計算）。\n"
+        "⚠️【推奨】peer_ev_ebitdas・peer_market_caps・target_market_capを渡すと時価総額ディスカウント補正後の\n"
+        "中央値を自動計算してExitMultipleとして使用する（その場合exit_multipleは無視される）。\n"
         "wacc: WACCを直接指定（0なら risk_free_rate+beta+equity_risk_premium で自動計算）\n"
         "expected_growth_rate: 比較用の期待成長率（Agent4のCAGR等, 0なら省略）\n"
         "shares_outstanding・net_debt: シナリオテーブルの株価換算用（省略可）\n"
-        "⚠️ 金額パラメータ（current_ev, ebitda_0, net_debt）はすべて【実際の円単位】で入力すること。"
+        "【時価総額ディスカウント補正】peer_ev_ebitdas・peer_market_caps・target_market_capを同時に渡すと、\n"
+        "対象企業の時価総額の1/2未満の同業他社のMultipleを自動割引する（小規模ほど大きく割引）。\n"
+        "渡さない場合は exit_multiple をそのまま使用する。\n"
+        "⚠️ 金額パラメータ（current_ev, ebitda_0, net_debt, peer_market_caps, target_market_cap）はすべて【実際の円単位】で入力すること。"
     )
     args_schema: type[BaseModel] = ReverseDCFInput
 
@@ -215,6 +285,41 @@ class ReverseDCFTool(BaseTool):
 
         N = p.projection_years
         M = p.exit_multiple
+
+        # ---- 時価総額ベースのExitMultiple補正 ----
+        # 対象企業の時価総額の1/2未満の同業他社は割高評価になりがちなのでMultipleを割引する。
+        # 割引係数 = (ratio / 0.5) ^ 0.4  [ratio < 0.5 の場合のみ]
+        # ・ratio = 0.50 → 係数 1.00（割引なし）
+        # ・ratio = 0.25 → 係数 ≈ 0.76（24%割引）
+        # ・ratio = 0.10 → 係数 ≈ 0.50（50%割引）
+        # ・ratio = 0.05 → 係数 ≈ 0.40（60%割引）
+        # 対象企業より大きい（ratio >= 0.5）場合は増やさずそのまま使用する。
+        size_discount_note = ""
+        if (p.peer_ev_ebitdas
+                and p.peer_market_caps
+                and len(p.peer_ev_ebitdas) == len(p.peer_market_caps)
+                and p.target_market_cap > 0):
+            adjusted_multiples = []
+            discount_detail_lines = []
+            for mult, peer_cap in zip(p.peer_ev_ebitdas, p.peer_market_caps):
+                ratio = peer_cap / p.target_market_cap
+                if ratio >= 0.5:
+                    factor = 1.0
+                else:
+                    factor = (ratio / 0.5) ** 0.4
+                adj = mult * factor
+                adjusted_multiples.append(adj)
+                disc_pct = (1 - factor) * 100
+                discount_detail_lines.append(
+                    f"  - EV/EBITDA {mult:.1f}x × 補正係数{factor:.3f}"
+                    f"（時価総額比{ratio:.2%}, -{disc_pct:.0f}%割引）→ {adj:.2f}x"
+                )
+            M = statistics.median(adjusted_multiples)
+            size_discount_note = (
+                f"時価総額ディスカウント補正後 ExitMultiple（中央値）= **{M:.2f}x**\n"
+                + "\n".join(discount_detail_lines)
+            )
+            logger.info(f"ExitMultiple size-discount: base={p.exit_multiple}x → adjusted median={M:.2f}x")
 
         # 単位補正チェック
         scale_note = ""
@@ -297,7 +402,16 @@ class ReverseDCFTool(BaseTool):
 
         # ---- 感応度テーブル（WACC × ExitMultiple → implied_g）----
         wacc_deltas = [-0.01, -0.005, 0.0, +0.005, +0.01]
-        exit_multiples = [6.0, 8.0, 10.0, 12.0]
+        # 実際のExitMultiple Mを中心に±2行のコンテキストを表示する
+        _std_ms = [4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0]
+        _pool = sorted(set(_std_ms + [float(M)]))
+        _mi = _pool.index(float(M))
+        _lo = max(0, _mi - 2)
+        _hi = _lo + 5
+        if _hi > len(_pool):
+            _hi = len(_pool)
+            _lo = max(0, _hi - 5)
+        exit_multiples = _pool[_lo:_hi]
 
         sens_rows = []
         wacc_hdrs = [f"WACC {(wacc + d)*100:.2f}%" for d in wacc_deltas]
@@ -368,6 +482,8 @@ class ReverseDCFTool(BaseTool):
         }
         if scale_note:
             result_rdcf["scale_note"] = scale_note
+        if size_discount_note:
+            result_rdcf["size_discount_note"] = size_discount_note
         return result_rdcf
 
 

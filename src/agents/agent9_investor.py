@@ -1,11 +1,11 @@
 """
-Agent8: 最終投資意思決定者
-Agent6（買いレポート）とAgent7（ショートレポート）の両方を読み込み、
+Agent9: 最終投資意思決定者
+Agent7（買いレポート）とAgent8（ショートレポート）の両方を読み込み、
 独立した立場から最終投資判断を下す。
 モデル: DeepSeek Reasoner (R1)
 
 【設計思想】
-- Agent6でもAgent7でもない第三者。どちらの結論にも先入観を持たない。
+- Agent7でもAgent8でもない第三者。どちらの結論にも先入観を持たない。
 - 「どちらが正しいか」を判定するのではなく「前提の成立確率」を推定する。
 - 確率加重期待リターンで最終判断を導出する（印象ではなくロジックで決める）。
 - DeepSeek R1の推論能力を活かした段階的論理展開を促す。
@@ -14,11 +14,11 @@ from crewai import Agent
 from src.config import get_reasoner_llm
 
 
-def create_agent8() -> Agent:
+def create_agent9() -> Agent:
     return Agent(
         role="最終投資意思決定者（独立アービトレーター）",
         goal=(
-            "Agent6の買いレポートとAgent7のショートレポートを第三者として精査し、"
+            "Agent7の買いレポートとAgent8のショートレポートを第三者として精査し、"
             "両者の正誤を分離したうえで、確率加重期待リターンに基づく"
             "最終投資判断（Buy / Hold / Sell）を明確に下すこと。"
         ),

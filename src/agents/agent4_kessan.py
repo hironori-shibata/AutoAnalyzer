@@ -11,7 +11,7 @@ from src.tools.financial_calc import FinancialCalcTool
 from src.tools.file_reader import MarkdownReadTool
 
 
-def create_agent3() -> Agent:
+def create_agent4() -> Agent:
     return Agent(
         role="最新決算短信リサーチャー",
         goal=(

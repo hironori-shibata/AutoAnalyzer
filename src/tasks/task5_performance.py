@@ -1,14 +1,14 @@
 """
-Task4: 業績トレンドリサーチタスク
-Agent4 (業績トレンドリサーチャー) が担当する。
+Task5: 業績トレンドリサーチタスク
+Agent5 (業績トレンドリサーチャー) が担当する。
 複数年の業績データを収集し、TrendAnalysisToolで計算する。
 """
 from crewai import Task
-from src.agents.agent4_performance import create_agent4
+from src.agents.agent5_performance import create_agent5
 
 
-def create_task4(ticker: str, edinet_code: str) -> Task:
-    agent = create_agent4()
+def create_task5(ticker: str, edinet_code: str) -> Task:
+    agent = create_agent5()
     return Task(
         description=(
             f"EdinetCode {edinet_code}（証券番号: {ticker}）の企業について、"

@@ -1,57 +1,66 @@
 """
-Task6: 総合レポート生成タスク（統括マネージャー担当）
-Agent1〜5の結果を集約し、DCF法・マルチプル法で企業価値を算定して最終レポートを生成する。
+Task7: 総合レポート生成タスク（統括マネージャー担当）
+Task1・Task2(Gemini)・Task3/3a/3b・Task4・Task5・Task6の結果を集約し、
+DCF法・マルチプル法で企業価値を算定して最終レポートを生成する。
 """
 from crewai import Task
-from src.agents.agent6_manager import create_agent6
+from src.agents.agent7_manager import create_agent7
 
 
-def create_task6(
+def create_task7(
     ticker: str,
     task1: Task,
-    task_gemini: Task,
-    task2a: Task,
-    task2b: Task,
+    task2: Task,
     task3: Task,
+    task3a: Task,
+    task3b: Task,
     task4: Task,
-    task_news: Task,
+    task5: Task,
+    task6: Task,
 ) -> Task:
-    agent = create_agent6()
+    agent = create_agent7()
     return Task(
         description=(
             f"以下の各Agentの調査結果を統合し、証券番号 {ticker} の"
             "総合企業価値分析レポートを作成してください。\n\n"
             "【レポートに必ず含める項目】\n"
             "1. 企業概要・事業内容サマリー（Agent1の結果から）\n"
-            "2. 業界構造・競争優位性の深い分析（Task2b（競合分析レポート）の結果から）\n"
+            "2. 業界構造・競争優位性の深い分析（Task3b（競合分析レポート）の結果から）\n"
             "   - 5フォース分析（既存競合/新規参入/代替品/買い手/売り手）\n"
             "   - 競争優位性の源泉（顧客認証の障壁・製造難易度・スイッチングコストを具体的に記述）\n"
-            "3. 最新決算財務指標の評価（Agent3の結果から）\n"
+            "3. 最新決算財務指標の評価（Agent5の結果から）\n"
             "   - 財務指標に加えて、必ず「セグメント別の業績（構成比や利益率）」と「配当・配当性向」を含めること\n"
-            "   - Agent3による「ROEのデュポン分解とROIC分析」を必ず含めること\n"
+            "   - Agent4による「ROEのデュポン分解とROIC分析」を必ず含めること\n"
             "   - ROEの低下・低水準については、過剰資本・資本回転低下・収益性低下のどれが根本原因かを経営問題として明示すること\n"
-            "4. 業績トレンドの評価（Agent4の結果から）\n"
+            "4. 業績トレンドの評価（Agent5の結果から）\n"
             "   - 必ず「配当金および配当性向の推移」に関する評価を含めること\n"
-            "   - Agent4が収集したセグメント別CAGRと構成比を記載すること\n"
+            "   - Agent5が収集したセグメント別CAGRと構成比を記載すること\n"
             f"5. 株価指標の取得（KabutanBatchToolで tickers=['{ticker}'] を呼び出し、現在株価・PER・PBRを取得すること）\n"
             "6. 逆DCF分析（ReverseDCFToolで計算）— 市場が織り込む成長率の可視化\n"
             "   【目的】現在のEVを所与として、市場が暗黙に前提とするEBITDA成長率（implied g）を逆算する。\n"
             "   DCFの理論株価算出ではなく、「市場の成長期待が妥当か」を検証する方法論。\n\n"
             "   【手順】\n"
             "   a) 入力データ収集:\n"
-            f"      - current_ev: 上記5.で取得した時価総額（円） + Agent3から取得した純有利子負債（円）\n"
+            f"      - current_ev: 上記5.で取得した時価総額（円） + Agent4から取得した純有利子負債（円）\n"
             "        ⚠️ 時価総額はKabutanBatchToolの取得テキストから読み取ること（「時価総額」行）。\n"
             "        ⚠️【単位】すべて実際の円単位で入力。百万円単位の数値は1,000,000倍すること。\n"
-            "      - ebitda_0: Agent3の決算短信から、営業利益 + 減価償却費（EBITDA近似値）。\n"
+            "      - ebitda_0: Agent4の決算短信から、営業利益 + 減価償却費（EBITDA近似値）。\n"
             "        FinancialCalcToolのebitda出力があればそれを使用すること。\n"
-            "      - exit_multiple: Task2bの競合分析から業界平均EV/EBITDAを使用。\n"
-            "        不明な場合はTask2（Perplexity）の業界データを参照。それでも不明な場合は8.0を使用し明記すること。\n"
-            "      - expected_growth_rate: Agent4の歴史的EBITDA CAGRまたは売上CAGR（比較用）。\n"
+            "      - exit_multiple / peer_ev_ebitdas / peer_market_caps / target_market_cap:\n"
+            "        ⚠️【必須】Task3bの競合分析から各競合他社のEV/EBITDAと時価総額を収集し、\n"
+            "        peer_ev_ebitdas（競合EV/EBITDAのリスト）・peer_market_caps（競合時価総額のリスト）・\n"
+            "        target_market_cap（対象企業の時価総額）を渡すこと。\n"
+            "        ツールが時価総額ディスカウント補正後の中央値を自動計算してExitMultipleとして使用する。\n"
+            "        exit_multipleパラメータ自体は、競合EV/EBITDAデータが一切取得できなかった場合の\n"
+            "        フォールバックとして使用すること（その際は「⚠️ 競合データ未取得のためデフォルト値X.Xを使用」と明記）。\n"
+            "        Task3bに値がない場合はTask3（Perplexity）から取得すること。\n"
+            "        それでも不明な場合のみ8.0を使用し、その根拠不足を⚠️で明示すること。\n"
+            "      - expected_growth_rate: Agent5の歴史的EBITDA CAGRまたは売上CAGR（比較用）。\n"
             "        0なら省略（比較コメントは出力されないが他の出力は影響なし）。\n"
-            "      - shares_outstanding: Agent3から取得した発行済株式数\n"
-            "      - net_debt: Agent3から取得した純有利子負債（シナリオテーブルの株価換算用）\n"
+            "      - shares_outstanding: Agent4から取得した発行済株式数\n"
+            "      - net_debt: Agent4から取得した純有利子負債（シナリオテーブルの株価換算用）\n"
             "      - wacc: 省略時はCAPMデフォルト値（β=1.1, Rf=1.5%, ERP=6%）で自動計算される。\n"
-            "        Agent3から負債比率・税率が取得できれば指定してもよい。\n\n"
+            "        Agent4から負債比率・税率が取得できれば指定してもよい。\n\n"
             "   b) ReverseDCFToolを1回呼び出す。\n\n"
             "   c) 結果の読み取りと記載（以下フィールドを必ずレポートに含めること）:\n"
             "      - implied_growth_rate_pct: 市場が織り込むEBITDA成長率（例: +7.5%/年）\n"
@@ -65,8 +74,11 @@ def create_task6(
             "      - 「市場の成長期待が現実的か、楽観すぎるか、悲観すぎるか」を一段落で述べること\n\n"
             "7. マルチプル法による理論株価（MultiplesValuationToolで計算）\n"
             "   - PER法のみを使用すること（EV/EBITDA法・SOTP法は実施しない）。\n"
-            "   - PER法: Agent2から競合他社のPER（peer_pers）、Agent3から対象企業のEPS（target_eps）\n"
-            "   - PER法（セグメント別加重）: Agent2がセグメント別競合PERテーブルを収集した場合は、"
+            "   - PER法: Task3aから競合他社のPER（peer_pers）、Agent4から対象企業のEPS（target_eps）\n"
+            "   - 【時価総額ディスカウント補正】peer_market_caps（競合他社の時価総額リスト, peer_persと同順）と\n"
+            "     target_market_cap（対象企業の時価総額, 上記5.でKabutanBatchToolから取得した値）も必ず渡すこと。\n"
+            "     ツールが自動的に小規模競合のPERを割引し、より適切な比較倍率を算出する。\n"
+            "   - PER法（セグメント別加重）: Task3aがセグメント別競合PERテーブルを収集した場合は、"
             "     segment_names・segment_weights・segment_median_pers パラメータも渡してセグメント加重PERを使用すること。"
             "     収集できなかった場合はpeer_persのみで計算し「全体中央値PER使用」と明記すること。\n"
             "   - ⚠️ 競合データが不足している場合、LLMの判断で勝手に数値を仮定することは厳禁。データがない場合はその旨を正直に記載すること。\n"
@@ -78,7 +90,7 @@ def create_task6(
             "   - multiples_per_price: MultiplesValuationToolの per_method.per_implied_price\n"
             "   ツール結果の judgment（割高/割安）と summary（例: '現在株価は理論値比 +22.9% 割高'）をそのまま使用すること。\n"
             "   ⚠️ PER法の判定と逆DCFの implied_g 判定が乖離する場合はその理由を考察すること。\n"
-            "   - roic: Agent3のFinancialCalcToolで計算したROIC（例: 0.035）を渡すこと。\n"
+            "   - roic: Agent4のFinancialCalcToolで計算したROIC（例: 0.035）を渡すこと。\n"
             "   - base_wacc: ReverseDCFToolの wacc 出力（例: 0.0588）を渡すこと。\n"
             "   - value_trap_warning が出力された場合は必ずセクション6-3および投資判断サマリーに引用し、\n"
             "     「買い」判断の場合は「ROIC<WACCの価値破壊状態であり、買い判断はROIC改善前提に依存する」\n"
@@ -88,7 +100,7 @@ def create_task6(
             "    - 強気シナリオ: 最もポジティブな前提（半導体回復・新事業成功・ROE改善等）と期待株価レンジ\n"
             "      ※ 強気シナリオには以下のROIC改善シナリオを含めること:\n"
             "         a) CCC（キャッシュコンバージョンサイクル）圧縮による運転資本効率改善\n"
-            "            - Agent3が計算したCCC日数を業界平均（製造業: 60〜90日目安）と比較\n"
+            "            - Agent5が計算したCCC日数を業界平均（製造業: 60〜90日目安）と比較\n"
             "            - CCC改善余地がある場合: 圧縮によって解放される運転資本を試算し、ROIC改善を定性的に示すこと\n"
             "         b) 遊休資産売却・設備稼働率向上による投下資本削減\n"
             "         c) これらによりROICがWACCを上回る時期の見通し（定性コメント）\n"
@@ -97,20 +109,20 @@ def create_task6(
             "    - ⚠️ 各シナリオの株価レンジはLLMが定性的に記載する（ToolによるDCF再計算は不要）\n"
             "11. 最新ニュース・市場動向（Gemini・Perplexity調査より）\n"
             "    ⚠️ このセクションは「現在進行中の事実」を記述する。未来予測・カタリスト（次項）とは厳密に区別すること。\n"
-            "    a) 対象企業の最新動向（Agent_Geminiのリサーチから）\n"
+            "    a) 対象企業の最新動向（Agent2（Gemini）のリサーチから）\n"
             "       - 市場・投資家が現在最も注目しているテーマ（AI・フィジカルAI・DX等）: ★最新マーク付きで引用\n"
             "       - 直近の決算説明会・IR資料での経営陣の主要メッセージ\n"
             "       - 製品・技術の最新市場評価（大型受注・新製品発表・競合比較の変化）\n"
             "       - ESG・ガバナンス動向（アクティビスト・株主提案等）\n"
-            "    b) 業界・競合の最新動向（Task2（Perplexity）およびTask2bの競合分析から）\n"
+            "    b) 業界・競合の最新動向（Task3（Perplexity）およびTask3bの競合分析から）\n"
             "       - 業界で現在起きていること（市場シェア変動・技術トレンド・規制変化）\n"
             "       - 主要競合他社の直近の動き（新製品・受注・M&A・業績変化）\n"
             "       - 業界全体の需給バランスの現状\n"
-            "    c) マクロ・地政学ニュース（Agent_newsから）\n"
+            "    c) マクロ・地政学ニュース（Agent6から）\n"
             "       - 対象企業のセクターに直接影響するマクロニュース（関税・規制・為替・サプライチェーン等）\n"
             "       - 業界固有の地政学リスクの現状\n"
             "    【注意】過去12ヶ月以内の確認済み事実のみを記載。憶測・予測は禁止。情報源が不明な場合は「情報なし」と記載すること。\n"
-            "12. カタリスト分析（Task2b（競合分析レポート）の結果から）\n"
+            "12. カタリスト分析（Task3b（競合分析レポート）の結果から）\n"
             "    - ポジティブカタリスト・ネガティブカタリスト各3〜5件を発生確率・株価インパクト付きで記載\n"
             "13. 投資判断サマリー\n"
             "    【必須ルール】以下の構造で明確に表明すること:\n"
@@ -120,9 +132,9 @@ def create_task6(
             "    c) 定性根拠: 競争優位性・業績トレンド・カタリストのうち判断を支持する要因を2〜3点記載\n"
             "    d) 前提・限界: この判断が崩れる条件（例: 半導体市況急悪化で判断変化）を1〜2点明記\n"
             "    e) 免責: 本レポートは参考情報であり最終投資判断はユーザー自身の責任で行うことを1行で明記\n\n"
-            "⚠️ Agent_news（業界・地政学ニュースレポート）のSTEP 5サマリーを必ず参照し、\n"
+            "⚠️ Agent6（業界・地政学ニュースレポート）のSTEP 5サマリーを必ず参照し、\n"
             "   リスク・課題（セクション7）とカタリスト分析（セクション10）に最新ニュース情報を反映すること。\n"
-            "   特にAgent_newsが指摘する「見落とされがちなリスク」は、必ずセクション7に独立項目として記載すること。\n"
+            "   特にAgent6が指摘する「見落とされがちなリスク」は、必ずセクション7に独立項目として記載すること。\n"
             "⚠️ 各Agentから取得したデータに欠落がある場合は、MarkdownReadTool を使って `data/{ticker}/kessan_tansin.md` を直接読み込み、生データから数値を補完すること。\n"
             "⚠️ 数値計算は必ず ReverseDCFTool および MultiplesValuationTool で実行すること。\n"
             "⚠️ LLM自身は絶対に数値計算を行わないこと。"
@@ -155,7 +167,7 @@ def create_task6(
             "   - 各シナリオの前提条件・期待株価レンジ・確率評価を含むこと\n"
             "## 9. 最新ニュース・市場動向\n"
             "   - a) 対象企業の最新動向（Geminiリサーチより: 市場注目テーマ・IR動向・製品評価・ESG）\n"
-            "   - b) 業界・競合の最新動向（Perplexity/Task2bより: 市場シェア・競合動向・業界需給）\n"
+            "   - b) 業界・競合の最新動向（Perplexity/Task3bより: 市場シェア・競合動向・業界需給）\n"
             "   - c) マクロ・地政学ニュース（Agent_newsより: セクター影響マクロニュース）\n"
             "   ※ 確認済み事実のみ。未来予測はカタリスト分析（セクション10）に記載すること\n"
             "## 10. カタリスト分析\n"
@@ -167,5 +179,5 @@ def create_task6(
             "   - 免責事項（1行）"
         ),
         agent=agent,
-        context=[task1, task_gemini, task2a, task2b, task3, task4, task_news],  # 全Agentの結果を参照
+        context=[task1, task2, task3, task3a, task3b, task4, task5, task6],  # 全Agentの結果を参照
     )

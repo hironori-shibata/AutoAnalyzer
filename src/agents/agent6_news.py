@@ -16,7 +16,7 @@ from crewai import Agent
 from src.config import get_perplexity_llm
 
 
-def create_agent_news() -> Agent:
+def create_agent6() -> Agent:
     today = date.today().strftime("%Y年%m月%d日")
     return Agent(
         role="最新業界ニュース・地政学リサーチャー",

@@ -47,7 +47,7 @@ def send_debug_task_output(
     3000文字を超える場合はファイルアップロードにフォールバック。
     """
     header = f"🔍 *[DEBUG] {agent_label} 完了*"
-    MAX_TEXT_LEN = 2800
+    MAX_TEXT_LEN = 3000
 
     if len(raw_output) <= MAX_TEXT_LEN:
         text = f"{header}\n```{raw_output}```"

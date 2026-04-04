@@ -1,0 +1,148 @@
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+flowchart TD
+    %% ===== 入力 =====
+    SLACK([Slack: 証券コード入力\n例: 7203])
+    EDINET[(EDINET API\nEdinetCode / DocCode)]
+
+    %% ===== 前処理 =====
+    CREW[crew.py\nrun_analysis]
+    SLACK --> CREW
+    CREW -->|ticker → EdinetCode| EDINET
+    EDINET -->|document_code| CREW
+
+    %% ===== Agent1 =====
+    subgraph A1["Agent1: 有報リサーチャー (DeepSeek v3)"]
+        T1[Task1: 有価証券報告書リサーチ]
+        TOOL_YUHO[IRBankYuhoTool\nIR Bank 有報スクレイピング]
+        T1 --> TOOL_YUHO
+    end
+    CREW --> T1
+
+    %% ===== Agent2 =====
+    subgraph A2["Agent2: 対象企業ディープリサーチャー (Gemini Flash)"]
+        T2[Task2: 企業固有最新情報収集]
+        NOTE2["Google Search Grounding\n(モデル内蔵機能)"]
+        T2 --> NOTE2
+    end
+    T1 -->|context| T2
+
+    %% ===== Agent3 / 3a / 3b =====
+    subgraph A3["Agent3: ライバルリサーチャー (Perplexity Sonar)"]
+        T3[Task3: 競合・業界情報収集]
+        NOTE3["Web Search\n(Perplexity モデル内蔵機能)"]
+        T3 --> NOTE3
+    end
+    CREW --> T3
+
+    subgraph A3a["Agent3a: 競合データ収集エージェント (DeepSeek v3)"]
+        T3a[Task3a: 競合定量データ収集]
+        TOOL_KABUTAN_BATCH[KabutanBatchTool\nPER / PBR / 時価総額 / 配当利回り]
+        TOOL_TV[TradingViewEVEBITDATool\nEV/EBITDA]
+        TOOL_THEME_LIST[KabutanThemeListTool\nテーマ一覧]
+        TOOL_THEME_STOCKS[KabutanThemeStocksTool\nテーマ銘柄]
+        T3a --> TOOL_KABUTAN_BATCH
+        T3a --> TOOL_TV
+        T3a --> TOOL_THEME_LIST
+        T3a --> TOOL_THEME_STOCKS
+    end
+    T3 -->|context| T3a
+
+    subgraph A3b["Agent3b: 競合分析レポート作成エージェント (DeepSeek R1)"]
+        T3b[Task3b: 競合分析統合レポート作成]
+    end
+    T3  -->|context| T3b
+    T3a -->|context| T3b
+
+    %% ===== Agent4 =====
+    subgraph A4["Agent4: 最新決算短信リサーチャー (DeepSeek v3)"]
+        T4[Task4: 最新決算短信解析]
+        TOOL_KESSAN[KessanFetcherTool\nIR Bank PDF → docling → Markdown]
+        TOOL_FINCALC[FinancialCalcTool\nROE/ROA/EPS/FCF/ROIC etc.]
+        TOOL_MD[MarkdownReadTool\nMarkdownファイル読み込み]
+        T4 --> TOOL_KESSAN
+        T4 --> TOOL_FINCALC
+        T4 --> TOOL_MD
+    end
+    CREW --> T4
+
+    %% ===== Agent5 =====
+    subgraph A5["Agent5: 業績トレンドリサーチャー (DeepSeek v3)"]
+        T5[Task5: 多年度業績トレンド分析]
+        TOOL_IRBANK_FIN[IRBankFinancialTableTool\n財務テーブルスクレイピング]
+        TOOL_IRBANK_SCR[IRBankScraperTool\nIR Bank 汎用スクレイピング]
+        TOOL_TREND[TrendAnalysisTool\nCAGR / 変化率 / トレンド方向]
+        T5 --> TOOL_IRBANK_FIN
+        T5 --> TOOL_IRBANK_SCR
+        T5 --> TOOL_TREND
+    end
+    CREW --> T5
+
+    %% ===== Agent6 =====
+    subgraph A6["Agent6: 最新業界ニュース・地政学リサーチャー (Perplexity Sonar)"]
+        T6[Task6: 業界ニュース・地政学情報収集]
+        NOTE6["Web Search\n(Perplexity モデル内蔵機能)"]
+        T6 --> NOTE6
+    end
+    T1 -->|context| T6
+
+    %% ===== Agent7 =====
+    subgraph A7["Agent7: 統括マネージャー・企業価値アナリスト (DeepSeek v3 long)"]
+        T7[Task7: 企業価値分析レポート作成]
+        TOOL_RDCF[ReverseDCFTool\n逆DCF計算]
+        TOOL_MULTI[MultiplesValuationTool\nPER / EV/EBITDA マルチプル]
+        TOOL_VALCOMP[ValuationComparisonTool\nDCF vs マルチプル比較]
+        TOOL_SOTP[SOTPValuationTool\nSum of the Parts]
+        TOOL_KABUTAN7[KabutanBatchTool\n現在株価・指標取得]
+        TOOL_MD7[MarkdownReadTool]
+        T7 --> TOOL_RDCF
+        T7 --> TOOL_MULTI
+        T7 --> TOOL_VALCOMP
+        T7 --> TOOL_SOTP
+        T7 --> TOOL_KABUTAN7
+        T7 --> TOOL_MD7
+    end
+    T1  -->|context| T7
+    T2  -->|context| T7
+    T3  -->|context| T7
+    T3a -->|context| T7
+    T3b -->|context| T7
+    T4  -->|context| T7
+    T5  -->|context| T7
+    T6  -->|context| T7
+
+    %% ===== Agent8 =====
+    subgraph A8["Agent8: ヘッジファンド・ショートアナリスト (ChatGPT)"]
+        T8[Task8: ショート分析レポート作成]
+    end
+    T7  -->|context| T8
+    T3b -->|context| T8
+
+    %% ===== Agent9 =====
+    subgraph A9["Agent9: 最終投資意思決定者 (DeepSeek R1)"]
+        T9[Task9: 最終投資判断]
+    end
+    T7  -->|context| T9
+    T8  -->|context| T9
+    T3b -->|context| T9
+
+    %% ===== 出力 =====
+    OUT_MD[(data/TICKER/\nMarkdownレポート)]
+    OUT_SLACK([Slack スレッド返信])
+
+    T7 -->|買いレポート| OUT_MD
+    T8 -->|ショートレポート| OUT_MD
+    T9 -->|最終投資判断| OUT_MD
+    OUT_MD --> OUT_SLACK
+
+    %% ===== スタイル =====
+    classDef agent fill:#dbeafe,stroke:#3b82f6,stroke-width:2px
+    classDef task fill:#fef9c3,stroke:#ca8a04,stroke-width:1px
+    classDef tool fill:#dcfce7,stroke:#16a34a,stroke-width:1px
+    classDef io fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,shape:rounded
+
+    class A1,A2,A3,A3a,A3b,A4,A5,A6,A7,A8,A9 agent
+    class T1,T2,T3,T3a,T3b,T4,T5,T6,T7,T8,T9 task
+    class TOOL_YUHO,TOOL_KABUTAN_BATCH,TOOL_TV,TOOL_THEME_LIST,TOOL_THEME_STOCKS tool
+    class TOOL_KESSAN,TOOL_FINCALC,TOOL_MD,TOOL_IRBANK_FIN,TOOL_IRBANK_SCR,TOOL_TREND tool
+    class TOOL_RDCF,TOOL_MULTI,TOOL_VALCOMP,TOOL_SOTP,TOOL_KABUTAN7,TOOL_MD7 tool
+    class SLACK,OUT_SLACK,EDINET,OUT_MD io

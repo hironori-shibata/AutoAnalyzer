@@ -47,6 +47,7 @@ def get_perplexity_llm() -> LLM:
         api_key=os.environ["OPENROUTER_API_KEY"],
         temperature=0.2,
         timeout=400,
+        max_tokens=8192,
     )
 
 def get_gemini_llm() -> LLM:

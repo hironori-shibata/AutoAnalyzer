@@ -1,22 +1,22 @@
 """
-Task2: ライバルリサーチ（情報収集フェーズ）
-Agent2 (ライバルリサーチャー / Perplexity Sonar) が担当する。
+Task3: ライバルリサーチ（情報収集フェーズ）
+Agent3 (ライバルリサーチャー / Perplexity Sonar) が担当する。
 Perplexityの検索能力を最大活用し、業界・競合・最新ニュースを先行収集する。
-この結果はTask2a（競合定量データ収集）のインプットとなる。
+この結果はTask3a（競合定量データ収集）のインプットとなる。
 """
 from datetime import date
 from crewai import Task
-from src.agents.agent2_rival import create_agent2
+from src.agents.agent3_rival import create_agent3
 
 
-def create_task2(ticker: str, company_name: str = "") -> Task:
-    agent = create_agent2()
+def create_task3(ticker: str, company_name: str = "") -> Task:
+    agent = create_agent3()
     today = date.today().strftime("%Y年%m月%d日")
     return Task(
         description=(
             f"本日の日付: {today}\n"
             f"証券番号 {ticker} の企業について、Perplexityの検索機能をフル活用して以下の情報を収集してください。\n\n"
-            "【重要】このタスクは後続の競合定量データ収集（Task2a）のインプットになります。\n"
+            "【重要】このタスクは後続の競合定量データ収集（Task3a）のインプットになります。\n"
             "競合他社を正確に特定し、社名・証券番号・その理由を明記してください。\n\n"
             "【Section 0: 対象企業の最新ニュース（今日〜12ヶ月）】\n"
             f"本日（{today}）時点での対象企業のニュース・イベントを積極的に収集せよ。\n"
@@ -61,7 +61,7 @@ def create_task2(ticker: str, company_name: str = "") -> Task:
             "  ※ AI・フィジカルAI・新分野への展開等の注目テーマがあれば必ず記載\n"
             "- Section 1: 業界・市場環境（市場規模・成長率・注目テーマ）\n"
             "- Section 2: 主要競合他社リスト（社名・証券番号・競合理由・最新動向・強み弱み）\n"
-            "  ※ Task2aでの定量データ収集に使用するため、証券番号を可能な限り明記すること\n"
+            "  ※ Task3aでの定量データ収集に使用するため、証券番号を可能な限り明記すること\n"
             "- Section 3: 競争優位性の予備分析（参入障壁・スイッチングコスト・差別化要因）\n"
             "- Section 4: カタリスト候補一覧（ポジティブ/ネガティブ各2件以上）"
         ),

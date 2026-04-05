@@ -1,5 +1,5 @@
 """
-Agent3: 最新決算短信リサーチャー
+Agent4: 最新決算短信リサーチャー
 IR Bankから最新の決算短信PDFを取得・Markdown変換し、
 Python Toolを使って各種財務指標を計算する。
 LLMには計算をさせない。

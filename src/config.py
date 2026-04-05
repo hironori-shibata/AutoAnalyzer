@@ -10,7 +10,8 @@ load_dotenv()
 
 # ===== LLM設定 =====
 def get_llm() -> LLM:
-    """DeepSeek v3 LLMインスタンスを返す（CrewAI 1.0+ LiteLLM対応）"""
+    """DeepSeek v3 LLMインスタンスを返す（CrewAI 1.0+ LiteLLM対応）無料枠1000回を使いきったら、こちらに変更してください。'''"""
+    '''
     return LLM(
         model="openai/deepseek-chat",
         api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -18,10 +19,17 @@ def get_llm() -> LLM:
         temperature=0.2,
         timeout=400,
         max_tokens=8192,
+    )'''
+    return LLM(
+        model="openrouter/qwen/qwen3.6-plus:free",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        temperature=0.2,
+        timeout=800,
+        max_tokens=8192, 
     )
-
 def get_llm_long_output() -> LLM:
-    """長文出力が必要なAgent（Agent6等）向け。max_tokensを8192に設定してレポート途切れを防ぐ。"""
+    """長文出力が必要なAgent（Agent6等）向け。max_tokensを8192に設定してレポート途切れを防ぐ。 無料枠1000回を使いきったら、こちらに変更してください。'''"""
+    '''
     return LLM(
         model="openai/deepseek-chat",
         api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -29,8 +37,14 @@ def get_llm_long_output() -> LLM:
         temperature=0.2,
         timeout=600,
         max_tokens=8192,
+    )'''
+    return LLM(
+        model="openrouter/qwen/qwen3.6-plus:free",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        temperature=0.2,
+        timeout=800,
+        max_tokens=8192, 
     )
-
 def get_reasoner_llm() -> LLM:
     """DeepSeek Reasoner (R1) LLMインスタンスを返す"""
     return LLM(
@@ -62,6 +76,7 @@ def get_gemini_llm() -> LLM:
         api_key=os.environ["GOOGLE_API_KEY"],
         temperature=0.2,
         timeout=400,
+        max_tokens=8192,
     )
 
 def get_chatgpt_llm() -> LLM:

@@ -296,17 +296,21 @@ class ReverseDCFTool(BaseTool):
             wacc = p.wacc
             wacc_note = f"WACC={wacc:.2%}（直接指定）"
         else:
-            # [P5] 負債比率: interest_bearing_debt + target_market_cap が揃えば市場価値ベースで自動計算
-            if p.interest_bearing_debt > 0 and p.target_market_cap > 0:
+            # [P5] 負債比率: target_market_cap > 0 であれば市場価値ベースで自動計算
+            # 無借金企業 (interest_bearing_debt=0) でも D/(D+E)=0% として正しく算出する
+            if p.target_market_cap > 0:
                 debt_ratio = p.interest_bearing_debt / (p.interest_bearing_debt + p.target_market_cap)
-                debt_ratio_note = (
-                    f"D/(D+E)={debt_ratio:.1%}"
-                    f"（有利子負債{p.interest_bearing_debt/1e8:.0f}億円"
-                    f"÷(同+時価総額{p.target_market_cap/1e8:.0f}億円）・市場価値ベース）"
-                )
+                if p.interest_bearing_debt > 0:
+                    debt_ratio_note = (
+                        f"D/(D+E)={debt_ratio:.1%}"
+                        f"（有利子負債{p.interest_bearing_debt/1e8:.0f}億円"
+                        f"÷(同+時価総額{p.target_market_cap/1e8:.0f}億円）・市場価値ベース）"
+                    )
+                else:
+                    debt_ratio_note = "D/(D+E)=0%（無借金企業・市場価値ベース）"
             else:
                 debt_ratio = p.debt_ratio
-                debt_ratio_note = f"D/(D+E)={debt_ratio:.0%}（⚠️ デフォルト値・interest_bearing_debt未提供）"
+                debt_ratio_note = f"D/(D+E)={debt_ratio:.0%}（⚠️ デフォルト値・target_market_cap未提供）"
 
             # [P4] 負債コスト: デフォルト値使用かつ時価総額が提供された場合は規模連動で自動設定
             _using_default_debt_cost = abs(p.debt_cost - DCF_DEFAULTS["debt_cost"]) < 1e-9
@@ -334,8 +338,8 @@ class ReverseDCFTool(BaseTool):
             _default_warnings = []
             if abs(p.beta - DCF_DEFAULTS["beta"]) < 1e-9:
                 _default_warnings.append("β=デフォルト1.1（業種別推定推奨）")
-            if p.interest_bearing_debt == 0:
-                _default_warnings.append("D/(D+E)=デフォルト30%（interest_bearing_debt未提供）")
+            if p.target_market_cap == 0:
+                _default_warnings.append("D/(D+E)=デフォルト30%（target_market_cap未提供）")
 
             wacc_note = (
                 f"WACC={wacc:.2%}（CAPM自動計算: Rf={p.risk_free_rate:.2%}, "
@@ -370,7 +374,7 @@ class ReverseDCFTool(BaseTool):
                     factor = 1.0
                 else:
                     factor = (ratio / 0.5) ** 1
-                factor=max(factor,0.2)
+                factor=max(factor,0.5)
                 adj = mult * factor
                 adjusted_multiples.append(adj)
                 disc_pct = (1 - factor) * 100

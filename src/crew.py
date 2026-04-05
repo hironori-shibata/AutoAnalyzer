@@ -370,7 +370,7 @@ def run_analysis(
             }, ensure_ascii=False) + "\n")
         logger.info(f"Crew実行終了: {crew_name} status={status}")
 
-    # Step 5: レポート文字列を取得（Agent6本文 + Agent7反論 + Agent8最終判断を結合）
+    # Step 5: レポート文字列を取得（Agent7本文 + Agent8反論 + Agent9最終判断を結合）
     main_report = task7.output.raw if (task7.output and hasattr(task7.output, "raw")) else ""
     critic_section = task8.output.raw if (task8.output and hasattr(task8.output, "raw")) else ""
     final_judgment = task9.output.raw if (task9.output and hasattr(task9.output, "raw")) else ""

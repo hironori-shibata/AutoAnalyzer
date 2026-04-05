@@ -102,11 +102,11 @@ EDINET_DOC_TYPE_YUHO = 120  # 有価証券報告書
 
 # DCFデフォルトパラメータ
 DCF_DEFAULTS = {
-    "risk_free_rate": 0.015,        # 日本10年国債利回り
-    "equity_risk_premium": 0.06,  # 株式リスクプレミアム
-    "beta": 1.1,                   # デフォルトベータ
-    "debt_cost": 0.01,             # 負債コスト
-    "debt_ratio": 0.3,             # 負債比率
+    "risk_free_rate": 0.016,        # 日本10年国債利回り（2026年時点, BOJ正常化後）
+    "equity_risk_premium": 0.055,   # 株式リスクプレミアム（Damodaran Japan ERP準拠: 4.5〜5.5%）
+    "beta": 1.1,                    # デフォルトβ（業種不明時のフォールバック）
+    "debt_cost": 0.01,              # 負債コスト基準値（時価総額連動で自動調整される）
+    "debt_ratio": 0.3,              # 有利子負債比率（D/(D+E)、市場価値ベース推奨）
     "tax_rate": 0.30,              # 実効税率
     "capex_ratio": 0.06,           # 設備投資比率（売上比）
     "terminal_growth_rate": 0.007,  # 永久成長率（1%に変更）

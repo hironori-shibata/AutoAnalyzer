@@ -215,7 +215,11 @@ class ReverseDCFInput(BaseModel):
     equity_risk_premium: float = DCF_DEFAULTS["equity_risk_premium"]
     beta: float = DCF_DEFAULTS["beta"]
     debt_cost: float = DCF_DEFAULTS["debt_cost"]
+    # 負債比率: interest_bearing_debt > 0 かつ target_market_cap > 0 の場合は
+    # D/(D+E) = interest_bearing_debt / (interest_bearing_debt + target_market_cap) で自動計算
+    # 両者が未提供の場合のみデフォルト値（0.3）を使用する
     debt_ratio: float = DCF_DEFAULTS["debt_ratio"]
+    interest_bearing_debt: float = 0.0  # 有利子負債合計（円単位）。WACC負債比率の自動計算用
     tax_rate: float = DCF_DEFAULTS["tax_rate"]
     # 比較用の期待成長率（Agent4の歴史的CAGRなど）
     expected_growth_rate: float = 0.0  # 0なら比較コメントなし
@@ -256,13 +260,21 @@ class ReverseDCFTool(BaseTool):
         "exit_multiple: 競合データが一切取得できない場合のフォールバック値（通常はpeer_ev_ebitdas渡しで自動計算）。\n"
         "⚠️【推奨】peer_ev_ebitdas・peer_market_caps・target_market_capを渡すと時価総額ディスカウント補正後の\n"
         "中央値を自動計算してExitMultipleとして使用する（その場合exit_multipleは無視される）。\n"
-        "wacc: WACCを直接指定（0なら risk_free_rate+beta+equity_risk_premium で自動計算）\n"
+        "【WACCパラメータ（wacc=0のとき以下でCAPM自動計算）】\n"
+        "beta: 業種別β目安 — 公益/食品: 0.5〜0.7 / 化学/製薬: 0.8〜1.0 / 自動車/重工: 0.9〜1.2 / 半導体/IT: 1.2〜1.8。\n"
+        "  省略時はデフォルト1.1（業種不明フォールバック）。\n"
+        "interest_bearing_debt: 有利子負債合計（円単位）。渡すと D/(D+E)=有利子負債/(有利子負債+時価総額) で\n"
+        "  負債比率を市場価値ベースで自動計算する。省略するとデフォルト30%が使われ精度が低下する。\n"
+        "  ⚠️ target_market_capと必ずセットで渡すこと。\n"
+        "debt_cost: 省略時は target_market_cap の規模に応じて自動設定される（負債コスト規模連動）。\n"
+        "  超大型(≥5兆円): 0.8% / 大型(1〜5兆円): 1.0% / 中型(3000億〜1兆円): 1.5% / 小型(<3000億円): 2.0%\n"
+        "wacc: WACCを直接指定（0なら上記コンポーネントから自動計算）\n"
         "expected_growth_rate: 比較用の期待成長率（Agent4のCAGR等, 0なら省略）\n"
         "shares_outstanding・net_debt: シナリオテーブルの株価換算用（省略可）\n"
         "【時価総額ディスカウント補正】peer_ev_ebitdas・peer_market_caps・target_market_capを同時に渡すと、\n"
         "対象企業の時価総額の1/2未満の同業他社のMultipleを自動割引する（小規模ほど大きく割引）。\n"
         "渡さない場合は exit_multiple をそのまま使用する。\n"
-        "⚠️ 金額パラメータ（current_ev, ebitda_0, net_debt, peer_market_caps, target_market_cap）はすべて【実際の円単位】で入力すること。"
+        "⚠️ 金額パラメータ（current_ev, ebitda_0, net_debt, interest_bearing_debt, peer_market_caps, target_market_cap）はすべて【実際の円単位】で入力すること。"
     )
     args_schema: type[BaseModel] = ReverseDCFInput
 
@@ -284,12 +296,44 @@ class ReverseDCFTool(BaseTool):
             wacc = p.wacc
             wacc_note = f"WACC={wacc:.2%}（直接指定）"
         else:
+            # [P5] 負債比率: interest_bearing_debt + target_market_cap が揃えば市場価値ベースで自動計算
+            if p.interest_bearing_debt > 0 and p.target_market_cap > 0:
+                debt_ratio = p.interest_bearing_debt / (p.interest_bearing_debt + p.target_market_cap)
+                debt_ratio_note = (
+                    f"D/(D+E)={debt_ratio:.1%}"
+                    f"（有利子負債{p.interest_bearing_debt/1e8:.0f}億円"
+                    f"÷(同+時価総額{p.target_market_cap/1e8:.0f}億円）・市場価値ベース）"
+                )
+            else:
+                debt_ratio = p.debt_ratio
+                debt_ratio_note = f"D/(D+E)={debt_ratio:.0%}（⚠️ デフォルト値・interest_bearing_debt未提供）"
+
+            # [P4] 負債コスト: デフォルト値使用かつ時価総額が提供された場合は規模連動で自動設定
+            _using_default_debt_cost = abs(p.debt_cost - DCF_DEFAULTS["debt_cost"]) < 1e-9
+            if _using_default_debt_cost and p.target_market_cap > 0:
+                if p.target_market_cap >= 5_000_000_000_000:      # 5兆円以上: 超大型
+                    debt_cost = 0.008
+                    debt_cost_tier = "超大型株(≥5兆円): 0.8%"
+                elif p.target_market_cap >= 1_000_000_000_000:    # 1〜5兆円: 大型
+                    debt_cost = 0.010
+                    debt_cost_tier = "大型株(1〜5兆円): 1.0%"
+                elif p.target_market_cap >= 300_000_000_000:      # 3000億〜1兆円: 中型
+                    debt_cost = 0.015
+                    debt_cost_tier = "中型株(3000億〜1兆円): 1.5%"
+                else:                                              # 3000億円未満: 小型
+                    debt_cost = 0.020
+                    debt_cost_tier = "小型株(<3000億円): 2.0%"
+            else:
+                debt_cost = p.debt_cost
+                debt_cost_tier = None
+
             re_val = p.risk_free_rate + p.beta * p.equity_risk_premium
-            wacc = (1 - p.debt_ratio) * re_val + p.debt_ratio * p.debt_cost * (1 - p.tax_rate)
+            wacc = (1 - debt_ratio) * re_val + debt_ratio * debt_cost * (1 - p.tax_rate)
             wacc_note = (
                 f"WACC={wacc:.2%}（CAPM自動計算: Rf={p.risk_free_rate:.2%}, "
                 f"ERP={p.equity_risk_premium:.2%}, β={p.beta}, "
-                f"Rd={p.debt_cost:.2%}, D/A={p.debt_ratio:.0%}）"
+                f"Rd={debt_cost:.2%}" + (f"[{debt_cost_tier}]" if debt_cost_tier else "") +
+                f", {debt_ratio_note}）"
             )
 
         N = p.projection_years

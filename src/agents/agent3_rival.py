@@ -66,5 +66,5 @@ def create_agent3b() -> Agent:
         tools=[],
         llm=llm,
         verbose=True,
-        max_iter=10,
+        max_iter=15,
     )

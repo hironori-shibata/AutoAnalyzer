@@ -45,5 +45,5 @@ def create_agent9() -> Agent:
         tools=[],
         llm=get_reasoner_llm(),
         verbose=True,
-        max_iter=10,
+        max_iter=20,
     )

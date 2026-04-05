@@ -329,12 +329,22 @@ class ReverseDCFTool(BaseTool):
 
             re_val = p.risk_free_rate + p.beta * p.equity_risk_premium
             wacc = (1 - debt_ratio) * re_val + debt_ratio * debt_cost * (1 - p.tax_rate)
+
+            # デフォルト値使用の警告フラグ
+            _default_warnings = []
+            if abs(p.beta - DCF_DEFAULTS["beta"]) < 1e-9:
+                _default_warnings.append("β=デフォルト1.1（業種別推定推奨）")
+            if p.interest_bearing_debt == 0:
+                _default_warnings.append("D/(D+E)=デフォルト30%（interest_bearing_debt未提供）")
+
             wacc_note = (
                 f"WACC={wacc:.2%}（CAPM自動計算: Rf={p.risk_free_rate:.2%}, "
                 f"ERP={p.equity_risk_premium:.2%}, β={p.beta}, "
                 f"Rd={debt_cost:.2%}" + (f"[{debt_cost_tier}]" if debt_cost_tier else "") +
                 f", {debt_ratio_note}）"
             )
+            if _default_warnings:
+                wacc_note += f" ⚠️ デフォルト値使用: {', '.join(_default_warnings)}"
 
         N = p.projection_years
         M = p.exit_multiple

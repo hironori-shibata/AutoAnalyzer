@@ -297,7 +297,7 @@ class ReverseDCFTool(BaseTool):
 
         # ---- 時価総額ベースのExitMultiple補正 ----
         # 対象企業の時価総額の1/2未満の同業他社は割高評価になりがちなのでMultipleを割引する。
-        # 割引係数 = (ratio / 0.5) ^ 0.4  [ratio < 0.5 の場合のみ]
+        # 割引係数 = (ratio / 0.5) ^ 1  [ratio < 0.5 の場合のみ]
         # ・ratio = 0.50 → 係数 1.00（割引なし）
         # ・ratio = 0.25 → 係数 ≈ 0.76（24%割引）
         # ・ratio = 0.10 → 係数 ≈ 0.50（50%割引）
@@ -315,7 +315,8 @@ class ReverseDCFTool(BaseTool):
                 if ratio >= 0.5:
                     factor = 1.0
                 else:
-                    factor = (ratio / 0.5) ** 0.4
+                    factor = (ratio / 0.5) ** 1
+                factor=max(factor,0.2)
                 adj = mult * factor
                 adjusted_multiples.append(adj)
                 disc_pct = (1 - factor) * 100

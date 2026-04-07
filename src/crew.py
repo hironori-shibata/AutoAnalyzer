@@ -22,7 +22,6 @@ from src.tasks.task3a_rival_data import create_task3a
 from src.tasks.task3b_rival_report import create_task3b
 from src.tasks.task4_kessan import create_task4
 from src.tasks.task5_performance import create_task5
-from src.tasks.task6_news import create_task6
 from src.tasks.task7_report import create_task7
 from src.tasks.task8_critic import create_task8
 from src.tasks.task9_investor import create_task9
@@ -288,8 +287,7 @@ def run_analysis(
     task3b = create_task3b(ticker, task3, task3a)            # 競合統合レポート作成 (DeepSeek, context=[task3, task3a])
     task4 = create_task4(ticker)
     task5 = create_task5(ticker, edinet_code)
-    task6 = create_task6(ticker, task1)
-    task7 = create_task7(ticker, task1, task2, task3, task3a, task3b, task4, task5, task6)
+    task7 = create_task7(ticker, task1, task2, task3, task3a, task3b, task4, task5)
     task8 = create_task8(ticker, task7, task3b)
     task9 = create_task9(ticker, task7, task8, task3b)
 
@@ -307,7 +305,7 @@ def run_analysis(
     crew_name = f"AutoAnalyzer_{ticker}"
 
     # ローカルイベントログ（JSONL）にAgent識別・全フィールド完全出力で記録する。
-    all_tasks = [task1, task2, task3, task3a, task3b, task4, task5, task6, task7, task8, task9]
+    all_tasks = [task1, task2, task3, task3a, task3b, task4, task5, task7, task8, task9]
     step_cb, task_cb = _make_event_logger(
         event_log_path, crew_name, all_tasks,
         slack_client=slack_client,
@@ -334,12 +332,11 @@ def run_analysis(
             task3b.agent,
             task4.agent,
             task5.agent,
-            task6.agent,
             task7.agent,
             task8.agent,
             task9.agent,
         ],
-        tasks=[task1, task2, task3, task3a, task3b, task4, task5, task6, task7, task8, task9],
+        tasks=[task1, task2, task3, task3a, task3b, task4, task5, task7, task8, task9],
         process=Process.sequential,  # task6 が context で 1〜5 を参照するため sequential
         verbose=True,
         output_log_file=log_file_path, #debugの一時的なコメントアウト

@@ -118,7 +118,7 @@ class MultiplesValuationTool(BaseTool):
                     factor = 1.0
                 else:
                     factor = (ratio / 0.5) ** 1
-                factor=max(factor,0.1) # 最低でも90%割引（10%の係数）までにする。極端に小さい企業がいる場合の過剰補正を防止。
+                factor=max(factor,0.5) # 最低でも50%割引（50%の係数）までにする。極端に小さい企業がいる場合の過剰補正を防止。
                 adj = per * factor
                 adjusted_pers.append(adj)
                 disc_pct = (1 - factor) * 100
